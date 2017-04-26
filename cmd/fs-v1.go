@@ -35,7 +35,7 @@ import (
 // fsObjects - Implements fs object layer.
 type fsObjects struct {
 	// Path to be exported over S3 API.
-	fsPath string
+	fsPath []string
 
 	// Unique value to be used for all
 	// temporary transactions.
@@ -78,59 +78,12 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		return nil, errInvalidArgument
 	}
 
-	var err error
-	// Disallow relative paths, figure out absolute paths.
-	fsPath, err = filepath.Abs(fsPath)
-	if err != nil {
-		return nil, err
-	}
-
-	fi, err := os.Stat(preparePath(fsPath))
-	if err == nil {
-		if !fi.IsDir() {
-			return nil, syscall.ENOTDIR
-		}
-	}
-	if os.IsNotExist(err) {
-		// Disk not found create it.
-		err = mkdirAll(fsPath, 0777)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// Assign a new UUID for FS minio mode. Each server instance
 	// gets its own UUID for temporary file transaction.
 	fsUUID := mustGetUUID()
 
-	// Initialize meta volume, if volume already exists ignores it.
-	if err = initMetaVolumeFS(fsPath, fsUUID); err != nil {
-		return nil, fmt.Errorf("Unable to initialize '.minio.sys' meta volume, %s", err)
-	}
-
-	// Load `format.json`.
-	format, err := loadFormatFS(fsPath)
-	if err != nil && err != errUnformattedDisk {
-		return nil, fmt.Errorf("Unable to load 'format.json', %s", err)
-	}
-
-	// If the `format.json` doesn't exist create one.
-	if err == errUnformattedDisk {
-		fsFormatPath := pathJoin(fsPath, minioMetaBucket, fsFormatJSONFile)
-		// Initialize format.json, if already exists overwrite it.
-		if serr := saveFormatFS(fsFormatPath, newFSFormatV1()); serr != nil {
-			return nil, fmt.Errorf("Unable to initialize 'format.json', %s", serr)
-		}
-	}
-
-	// Validate if we have the same format.
-	if err == nil && format.Format != "fs" {
-		return nil, fmt.Errorf("Unable to recognize backend format, Disk is not in FS format. %s", format.Format)
-	}
-
 	// Initialize fs objects.
 	fs := &fsObjects{
-		fsPath: fsPath,
 		fsUUID: fsUUID,
 		rwPool: &fsIOPool{
 			readersMap: make(map[string]*lock.RLockedFile),
@@ -141,6 +94,15 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		},
 	}
 
+	err := fs.verifyAndAddFSPath(fsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	err = fs.verifyAndAddFSPath("disk2")
+	if err != nil {
+		return nil, err
+	}
 	// Initialize and load bucket policies.
 	err = initBucketPolicies(fs)
 	if err != nil {
@@ -155,6 +117,60 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 
 	// Return successfully initialized object layer.
 	return fs, nil
+}
+
+// verifyAndAddFSPath - verifies whether we have a valid path and adds it
+func (fs *fsObjects) verifyAndAddFSPath(fsPath string) error {
+
+	var err error
+	// Disallow relative paths, figure out absolute paths.
+	fsPath, err = filepath.Abs(fsPath)
+	if err != nil {
+		return err
+	}
+
+	fi, err := os.Stat(preparePath(fsPath))
+	if err == nil {
+		if !fi.IsDir() {
+			return syscall.ENOTDIR
+		}
+	}
+	if os.IsNotExist(err) {
+		// Disk not found create it.
+		err = mkdirAll(fsPath, 0777)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Initialize meta volume, if volume already exists ignores it.
+	if err = initMetaVolumeFS(fsPath, fs.fsUUID); err != nil {
+		return fmt.Errorf("Unable to initialize '.minio.sys' meta volume, %s", err)
+	}
+
+	// Load `format.json`.
+	format, err := loadFormatFS(fsPath)
+	if err != nil && err != errUnformattedDisk {
+		return fmt.Errorf("Unable to load 'format.json', %s", err)
+	}
+
+	// If the `format.json` doesn't exist create one.
+	if err == errUnformattedDisk {
+		fsFormatPath := pathJoin(fsPath, minioMetaBucket, fsFormatJSONFile)
+		// Initialize format.json, if already exists overwrite it.
+		if serr := saveFormatFS(fsFormatPath, newFSFormatV1()); serr != nil {
+			return fmt.Errorf("Unable to initialize 'format.json', %s", serr)
+		}
+	}
+
+	// Validate if we have the same format.
+	if err == nil && format.Format != "fs" {
+		return fmt.Errorf("Unable to recognize backend format, Disk is not in FS format. %s", format.Format)
+	}
+
+	fs.fsPath = append(fs.fsPath, fsPath)
+
+	return nil
 }
 
 // Should be called when process shuts down.
