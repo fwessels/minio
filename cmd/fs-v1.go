@@ -193,25 +193,46 @@ func (fs fsObjects) StorageInfo() StorageInfo {
 
 /// Bucket operations
 
-// getBucketDir - will convert incoming bucket names to
-// corresponding valid bucket names on the backend in a platform
+// getBucketDirs - will convert incoming bucket name to
+// corresponding valid bucket directories on the backend in a platform
 // compatible way for all operating systems.
-func (fs fsObjects) getBucketDir(bucket string) (string, error) {
+func (fs fsObjects) getBucketDirs(bucket string) ([]string, error) {
+	// Verify if bucket is valid.
+	if !IsValidBucketName(bucket) {
+		return []string{}, traceError(BucketNameInvalid{Bucket: bucket})
+	}
+
+	bucketDirs := []string{}
+	for _, path := range fs.fsPath {
+		bucketDir := pathJoin(path, bucket)
+		_, err := fsStatDir(bucketDir);
+		if err == nil {
+			// If corresponding directory exists, add to list
+			bucketDirs = append(bucketDirs, bucketDir)
+		}
+	}
+	return bucketDirs, nil
+}
+
+func (fs fsObjects) getNewBucketDir(bucket string) (string, error) {
 	// Verify if bucket is valid.
 	if !IsValidBucketName(bucket) {
 		return "", traceError(BucketNameInvalid{Bucket: bucket})
 	}
 
-	bucketDir := pathJoin(fs.fsPath, bucket)
+	// TODO: Properly schedule where to create the new bucket
+	slot := rand.Intn(len(fs.fsPath))
+	bucketDir := pathJoin(fs.fsPath[slot], bucket)
 	return bucketDir, nil
 }
 
 func (fs fsObjects) statBucketDir(bucket string) (os.FileInfo, error) {
-	bucketDir, err := fs.getBucketDir(bucket)
+	bucketDirs, err := fs.getBucketDirs(bucket)
 	if err != nil {
 		return nil, err
 	}
-	st, err := fsStatDir(bucketDir)
+	// TODO: Iterate over the dirs
+	st, err := fsStatDir(bucketDirs[0])
 	if err != nil {
 		return nil, err
 	}
@@ -221,13 +242,18 @@ func (fs fsObjects) statBucketDir(bucket string) (os.FileInfo, error) {
 // MakeBucket - create a new bucket, returns if it
 // already exists.
 func (fs fsObjects) MakeBucket(bucket string) error {
-	bucketDir, err := fs.getBucketDir(bucket)
+	bucketDirs, err := fs.getBucketDirs(bucket)
 	if err != nil {
 		return toObjectErr(err, bucket)
 	}
-
-	if err = fsMkdir(bucketDir); err != nil {
-		return toObjectErr(err, bucket)
+	if len(bucketDirs) == 0 {
+		bucketDir, err := fs.getNewBucketDir(bucket)
+		if err != nil {
+			return toObjectErr(err, bucket)
+		}
+		if err = fsMkdir(bucketDir); err != nil {
+			return toObjectErr(err, bucket)
+		}
 	}
 
 	return nil
@@ -504,11 +530,33 @@ func (fs fsObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
 	return fs.getObjectInfo(bucket, object)
 }
 
+// getWritablePath - search if object already exists in one
+// of the bucket slots
+func (fs fsObjects) getWritablePath(bucket, object string) (string, error) {
+
+	bucketDirs, err := fs.getBucketDirs(bucket)
+	if err != nil {
+		return "", err
+	}
+	for _, bucketDir := range bucketDirs {
+		_, err := fsStatFile(pathJoin(bucketDir, object))
+		if err == nil {
+			path, _ := path.Split(bucketDir)
+			return path, nil
+		}
+	}
+
+	// TODO: Properly schedule where to create the new object
+	bucketDir := bucketDirs[rand.Intn(len(bucketDirs))]
+	path, _ := path.Split(bucketDir)
+	return path, nil
+}
+
 // PutObject - creates an object upon reading from the input stream
 // until EOF, writes data directly to configured filesystem path.
 // Additionally writes `fs.json` which carries the necessary metadata
 // for future object operations.
-func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.Reader, metadata map[string]string, sha256sum string) (objInfo ObjectInfo, retErr error) {
+func (fs fsObjects) PutObject(bucket, object string, size int64, data io.Reader, metadata map[string]string, sha256sum string) (objInfo ObjectInfo, retErr error) {
 	var err error
 
 	// This is a special case with size as '0' and object ends with
@@ -525,6 +573,12 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 		return ObjectInfo{}, toObjectErr(err, bucket)
 	}
 
+	// Get path we can write to for this object
+	fsPath, err := fs.getWritablePath(bucket, object)
+	if err != nil {
+		return ObjectInfo{}, toObjectErr(err, bucket)
+	}
+
 	// No metadata is set, allocate a new one.
 	if metadata == nil {
 		metadata = make(map[string]string)
@@ -535,7 +589,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 
 	var wlk *lock.LockedFile
 	if bucket != minioMetaBucket {
-		bucketMetaDir := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix)
+		bucketMetaDir := pathJoin(fsPath, minioMetaBucket, bucketMetaPrefix)
 		fsMetaPath := pathJoin(bucketMetaDir, bucket, object, fsMetaJSONFile)
 		wlk, err = fs.rwPool.Create(fsMetaPath)
 		if err != nil {
@@ -546,7 +600,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 		defer func() {
 			// Remove meta file when PutObject encounters any error
 			if retErr != nil {
-				tmpDir := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID)
+				tmpDir := pathJoin(fsPath, minioMetaTmpBucket, fs.fsUUID)
 				fsRemoveMeta(bucketMetaDir, fsMetaPath, tmpDir)
 			}
 		}()
@@ -586,7 +640,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 	}
 	buf := make([]byte, int(bufSize))
 	teeReader := io.TeeReader(limitDataReader, multiWriter)
-	fsTmpObjPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, tempObj)
+	fsTmpObjPath := pathJoin(fsPath, minioMetaTmpBucket, fs.fsUUID, tempObj)
 	bytesWritten, err := fsCreateFile(fsTmpObjPath, teeReader, buf, size)
 	if err != nil {
 		fsRemoveFile(fsTmpObjPath)
@@ -629,7 +683,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 	}
 
 	// Entire object was written to the temp location, now it's safe to rename it to the actual location.
-	fsNSObjPath := pathJoin(fs.fsPath, bucket, object)
+	fsNSObjPath := pathJoin(fsPath, bucket, object)
 	if err = fsRenameFile(fsTmpObjPath, fsNSObjPath); err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
@@ -642,7 +696,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 	}
 
 	// Stat the file to fetch timestamp, size.
-	fi, err := fsStatFile(pathJoin(fs.fsPath, bucket, object))
+	fi, err := fsStatFile(pathJoin(fsPath, bucket, object))
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
