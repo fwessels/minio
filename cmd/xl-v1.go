@@ -45,7 +45,7 @@ const (
 	minRAMSize = 24 * humanize.GiByte
 
 	// Maximum erasure blocks.
-	maxErasureBlocks = 16
+	maxErasureBlocks = 128
 
 	// Minimum erasure blocks.
 	minErasureBlocks = 4
