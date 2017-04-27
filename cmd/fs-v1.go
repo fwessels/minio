@@ -540,10 +540,9 @@ func (fs fsObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
 	return fs.getObjectInfo(bucket, object)
 }
 
-// getWritablePath - search if object already exists in one
+// getObjectPath - search if object already exists in one
 // of the bucket slots
-func (fs fsObjects) getWritablePath(bucket, object string) (string, error) {
-
+func (fs *fsObjects) getObjectPath(bucket, object string, readOnly bool) (string, error) {
 	bucketDirs, err := fs.getBucketDirs(bucket)
 	if err != nil {
 		return "", err
@@ -556,10 +555,27 @@ func (fs fsObjects) getWritablePath(bucket, object string) (string, error) {
 		}
 	}
 
+	if readOnly {
+		return "", traceError(errFileNotFound)
+	}
+
 	// TODO: Properly schedule where to create the new object
 	bucketDir := bucketDirs[rand.Intn(len(bucketDirs))]
 	path, _ := path.Split(bucketDir)
 	return path, nil
+}
+
+// getReadablePath - search if object exists in one
+// of the bucket slots
+func (fs *fsObjects) getReadablePath(bucket, object string) (string, error) {
+	return fs.getObjectPath(bucket, object, true)
+}
+
+// getWritablePath - search if object already exists in one
+// of the bucket slots and return the slot if so. Otherwise assign the
+// object to a new slot
+func (fs *fsObjects) getWritablePath(bucket, object string) (string, error) {
+	return fs.getObjectPath(bucket, object, false)
 }
 
 // PutObject - creates an object upon reading from the input stream
