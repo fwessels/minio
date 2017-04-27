@@ -181,11 +181,21 @@ func (fs fsObjects) Shutdown() error {
 
 // StorageInfo - returns underlying storage statistics.
 func (fs fsObjects) StorageInfo() StorageInfo {
-	info, err := getDiskInfo(preparePath(fs.fsPath))
-	errorIf(err, "Unable to get disk info %#v", fs.fsPath)
+	total, free := int64(0), int64(0)
+	disks := []string{}
+	// TODO: Get unique list of disks
+	for _, path := range fs.fsPath {
+		disks = append(disks, path)
+	}
+	for _, disk := range disks {
+		info, err := getDiskInfo(preparePath(disk))
+		errorIf(err, "Unable to get disk info %#v", disk)
+		total += info.Total
+		free += info.Free
+	}
 	storageInfo := StorageInfo{
-		Total: info.Total,
-		Free:  info.Free,
+		Total: total,
+		Free:  free,
 	}
 	storageInfo.Backend.Type = FS
 	return storageInfo
