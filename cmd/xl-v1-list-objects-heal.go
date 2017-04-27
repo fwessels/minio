@@ -76,13 +76,14 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 		recursive = false
 	}
 
+	bucketSlot := xl.bucketSlots[0]
 	// "heal" true for listObjectsHeal() and false for listObjects()
 	heal := true
 	walkResultCh, endWalkCh := xl.listPool.Release(listParams{bucket, recursive, marker, prefix, heal})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := xl.isObject
-		listDir := listDirHealFactory(isLeaf, xl.storageDisks...)
+		listDir := listDirHealFactory(isLeaf, bucketSlot.storageDisks...)
 		walkResultCh = startTreeWalk(bucket, prefix, marker, recursive, listDir, nil, endWalkCh)
 	}
 
@@ -143,8 +144,8 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 		// Check if the current object needs healing
 		objectLock := globalNSMutex.NewNSLock(bucket, objInfo.Name)
 		objectLock.RLock()
-		partsMetadata, errs := readAllXLMetadata(xl.storageDisks, bucket, objInfo.Name)
-		if xlShouldHeal(xl.storageDisks, partsMetadata, errs, bucket, objInfo.Name) {
+		partsMetadata, errs := readAllXLMetadata(bucketSlot.storageDisks, bucket, objInfo.Name)
+		if xlShouldHeal(bucketSlot.storageDisks, partsMetadata, errs, bucket, objInfo.Name) {
 			healStat := xlHealStat(xl, partsMetadata, errs)
 			result.Objects = append(result.Objects, ObjectInfo{
 				Name:           objInfo.Name,
@@ -361,6 +362,8 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 
 	}
 
+	bucketSlot := xl.bucketSlots[0]
+
 	// For all received uploads fill in the multiparts result.
 	for _, upload := range uploads {
 		var objectName string
@@ -375,9 +378,9 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 		} else {
 			// Check if upload needs healing.
 			uploadIDPath := filepath.Join(bucket, upload.Object, upload.UploadID)
-			partsMetadata, errs := readAllXLMetadata(xl.storageDisks,
+			partsMetadata, errs := readAllXLMetadata(bucketSlot.storageDisks,
 				minioMetaMultipartBucket, uploadIDPath)
-			if xlShouldHeal(xl.storageDisks, partsMetadata, errs,
+			if xlShouldHeal(bucketSlot.storageDisks, partsMetadata, errs,
 				minioMetaMultipartBucket, uploadIDPath) {
 
 				healUploadInfo := xlHealStat(xl, partsMetadata, errs)
