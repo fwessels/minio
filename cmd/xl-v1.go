@@ -55,7 +55,7 @@ const (
 type xlObjects struct {
 	mutex        *sync.Mutex
 	storageDisks []StorageAPI // Collection of initialized backend disks.
-	dataBlocks   int          // dataBlocks count caculated for erasure.
+	dataBlocks   int          // dataBlocks count calculated for erasure.
 	parityBlocks int          // parityBlocks count calculated for erasure.
 	readQuorum   int          // readQuorum minimum required disks to read data.
 	writeQuorum  int          // writeQuorum minimum required disks to write data.
