@@ -138,7 +138,7 @@ func (fs fsObjects) abort(uploadID string) {
 
 // This is run as a go-routine that appends the parts in the background.
 func (fs fsObjects) appendParts(bucket, object, uploadID string, info bgAppendPartsInfo) {
-	appendPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, uploadID)
+	appendPath := pathJoin(fs.fsPath[0], minioMetaTmpBucket, fs.fsUUID, uploadID)
 	// Holds the list of parts that is already appended to the "append" file.
 	appendMeta := fsMetaV1{}
 
@@ -208,7 +208,7 @@ func (fs fsObjects) appendParts(bucket, object, uploadID string, info bgAppendPa
 // Appends the "part" to the append-file inside "tmp/" that finally gets moved to the actual location
 // upon complete-multipart-upload.
 func (fs fsObjects) appendPart(bucket, object, uploadID string, part objectPartInfo, buf []byte) error {
-	partPath := pathJoin(fs.fsPath, minioMetaMultipartBucket, bucket, object, uploadID, part.Name)
+	partPath := pathJoin(fs.fsPath[0], minioMetaMultipartBucket, bucket, object, uploadID, part.Name)
 
 	var offset int64
 	// Read each file part to start writing to the temporary concatenated object.
@@ -221,7 +221,7 @@ func (fs fsObjects) appendPart(bucket, object, uploadID string, part objectPartI
 	}
 	defer file.Close()
 
-	tmpObjPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, uploadID)
+	tmpObjPath := pathJoin(fs.fsPath[0], minioMetaTmpBucket, fs.fsUUID, uploadID)
 	// No need to hold a lock, this is a unique file and will be only written
 	// to one one process per uploadID per minio process.
 	wfile, err := os.OpenFile(preparePath(tmpObjPath), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
