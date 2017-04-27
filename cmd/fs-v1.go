@@ -284,13 +284,48 @@ func (fs fsObjects) GetBucketInfo(bucket string) (BucketInfo, error) {
 	}, nil
 }
 
-// ListBuckets - list all s3 compatible buckets (directories) at fsPath.
+// ListBuckets - list all s3 compatible buckets (directories)
 func (fs fsObjects) ListBuckets() ([]BucketInfo, error) {
-	if err := checkPathLength(fs.fsPath); err != nil {
+
+	bucketMap := make(map[string]BucketInfo)
+
+	for _, path := range fs.fsPath {
+		bucketInfos, err := listBucketsForPath(path)
+		if err != nil {
+			return nil, err
+		}
+		// Iterate over buckets, only adding when new
+		for _, bucketInfo := range bucketInfos {
+			bi, ok := bucketMap[bucketInfo.Name]
+			if !ok {
+				bucketMap[bucketInfo.Name] = bucketInfo
+			} else if bi.Created.UnixNano() > bucketInfo.Created.UnixNano() {
+				// Take the time of the earliest created directory
+				bucketMap[bucketInfo.Name] = bucketInfo
+			}
+		}
+	}
+
+	bucketInfos := []BucketInfo{}
+
+	// Copy map of bucket infos to list
+	for _, bucketInfo := range bucketMap {
+		bucketInfos = append(bucketInfos, bucketInfo)
+	}
+
+	// Sort bucket infos by bucket name.
+	sort.Sort(byBucketName(bucketInfos))
+
+	return bucketInfos, nil
+}
+
+// listBucketsForPath - list all s3 compatible buckets (directories) at path.
+func listBucketsForPath(path string) ([]BucketInfo, error) {
+	if err := checkPathLength(path); err != nil {
 		return nil, traceError(err)
 	}
 	var bucketInfos []BucketInfo
-	entries, err := readDir(preparePath(fs.fsPath))
+	entries, err := readDir(preparePath(path))
 	if err != nil {
 		return nil, toObjectErr(traceError(errDiskNotFound))
 	}
