@@ -483,8 +483,13 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 
 // getObjectInfo - wrapper for reading object metadata and constructs ObjectInfo.
 func (fs fsObjects) getObjectInfo(bucket, object string) (ObjectInfo, error) {
+	fsPath, err := fs.getReadablePath(bucket, object)
+	if err != nil {
+		return ObjectInfo{}, toObjectErr(traceError(err), bucket, object)
+	}
+
 	fsMeta := fsMetaV1{}
-	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
+	fsMetaPath := pathJoin(fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
 
 	// Read `fs.json` to perhaps contend with
 	// parallel Put() operations.
@@ -508,7 +513,7 @@ func (fs fsObjects) getObjectInfo(bucket, object string) (ObjectInfo, error) {
 	}
 
 	// Stat the file to get file size.
-	fi, err := fsStatFile(pathJoin(fs.fsPath, bucket, object))
+	fi, err := fsStatFile(pathJoin(fsPath, bucket, object))
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
