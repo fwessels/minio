@@ -426,6 +426,11 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 		return toObjectErr(err, bucket)
 	}
 
+	fsPath, err := fs.getReadablePath(bucket, object)
+	if err != nil {
+		return toObjectErr(err, bucket)
+	}
+
 	// Offset cannot be negative.
 	if offset < 0 {
 		return toObjectErr(traceError(errUnexpected), bucket, object)
@@ -437,7 +442,7 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 	}
 
 	if bucket != minioMetaBucket {
-		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
+		fsMetaPath := pathJoin(fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
 		_, err = fs.rwPool.Open(fsMetaPath)
 		if err != nil && err != errFileNotFound {
 			return toObjectErr(traceError(err), bucket, object)
@@ -446,7 +451,7 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 	}
 
 	// Read the object, doesn't exist returns an s3 compatible error.
-	fsObjPath := pathJoin(fs.fsPath, bucket, object)
+	fsObjPath := pathJoin(fsPath, bucket, object)
 	reader, size, err := fsOpenFile(fsObjPath, offset)
 	if err != nil {
 		return toObjectErr(err, bucket, object)
