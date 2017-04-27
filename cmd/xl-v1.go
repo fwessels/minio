@@ -97,6 +97,7 @@ func newXLObjects(storageDisks []StorageAPI) (ObjectLayer, error) {
 		return nil, errInvalidArgument
 	}
 
+	storageDisks = getDisksForBucketSlot(storageDisks, 0)
 	readQuorum := len(storageDisks) / 2
 	writeQuorum := len(storageDisks)/2 + 1
 

@@ -353,7 +353,7 @@ func reorderDisks(bootstrapDisks []StorageAPI, formatConfigs []*formatConfigV1) 
 		if jIndex == -1 {
 			return nil, errors.New("Unrecognized uuid " + format.XL.Disk + " found")
 		}
-		newDisks[jIndex] = bootstrapDisks[fIndex]
+		newDisks[jIndex / getBucketSlots([]StorageAPI{})] = bootstrapDisks[fIndex]
 	}
 	return newDisks, nil
 }
@@ -790,7 +790,7 @@ func checkFormatXLValues(formatConfigs []*formatConfigV1) (int, error) {
 		if err := checkFormatXLValue(formatXL); err != nil {
 			return i, err
 		}
-		if len(formatConfigs) != len(formatXL.XL.JBOD) {
+		if false && len(formatConfigs) != len(formatXL.XL.JBOD) {
 			return i, fmt.Errorf("Number of disks %d did not match the backend format %d",
 				len(formatConfigs), len(formatXL.XL.JBOD))
 		}
