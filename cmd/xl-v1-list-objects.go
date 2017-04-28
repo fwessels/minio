@@ -16,6 +16,11 @@
 
 package cmd
 
+import (
+	"fmt"
+	"sort"
+)
+
 // Returns function "listDir" of the type listDirFunc.
 // isLeaf - is used by listDir function to check if an entry is a leaf or non-leaf entry.
 // disks - used for doing disk.ListDir(). FS passes single disk argument, XL passes a list of disks.
@@ -46,7 +51,7 @@ func listDirFactory(isLeaf isLeafFunc, treeWalkIgnoredErrs []error, disks ...Sto
 }
 
 // listObjects - wrapper function implemented over file tree walk.
-func (xl xlObjects) listObjects(bucket, prefix, marker, delimiter string, maxKeys int) (ListObjectsInfo, error) {
+func (xl xlObjects) listObjects(bucketSlot BucketSlot, bucket, prefix, marker, delimiter string, maxKeys int) (ListObjectsInfo, error) {
 	// Default is recursive, if delimiter is set then list non recursive.
 	recursive := true
 	if delimiter == slashSeparator {
@@ -58,7 +63,7 @@ func (xl xlObjects) listObjects(bucket, prefix, marker, delimiter string, maxKey
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := xl.isObject
-		listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, xl.getLoadBalancedDisks()...)
+		listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, bucketSlot.getLoadBalancedDisks()...)
 		walkResultCh = startTreeWalk(bucket, prefix, marker, recursive, listDir, isLeaf, endWalkCh)
 	}
 
@@ -145,13 +150,88 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		maxKeys = maxObjectList
 	}
 
-	// Initiate a list operation, if successful filter and return quickly.
-	listObjInfo, err := xl.listObjects(bucket, prefix, marker, delimiter, maxKeys)
-	if err == nil {
-		// We got the entries successfully return.
-		return listObjInfo, nil
+	result := ListObjectsInfo{IsTruncated: true}
+
+	// Get the list of slots that we need to search for the list
+	bucketSlots, err := xl.getSlotsForBucket(bucket)
+	if err != nil {
+		return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
 	}
 
-	// Return error at the end.
-	return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
+	mapListObjInfo := make(map[int]ListObjectsInfo)
+
+	// Fetch remaining entries for all slots from previous invocation
+
+	// Collect the lists for all slots for this bucket
+	for bucketIndex, bucketSlot := range bucketSlots {
+
+		// Initiate a list operation for this slot.
+		listObjInfo, err := xl.listObjects(bucketSlot, bucket, prefix, marker, delimiter, maxKeys)
+		if err != nil {
+			return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
+		}
+		mapListObjInfo[bucketIndex] = listObjInfo
+	}
+
+	indices := make([]int, len(mapListObjInfo))
+
+	topOfLists := make([]NameIndexPair, 0, len(mapListObjInfo))
+
+	// Since the lists that we are merging are sorted, we can
+	// simply sort the top entries and take the first one
+	for len(result.Objects) < maxObjectList {
+
+		topOfLists = topOfLists[:0]
+
+		// Get top entries from all lists
+		for i := 0; i < len(mapListObjInfo); i++ {
+			if indices[i] < len(mapListObjInfo[i].Objects) {
+				topOfLists = append(topOfLists, NameIndexPair{name: mapListObjInfo[i].Objects[indices[i]].Name, index: i})
+			} else if mapListObjInfo[i].IsTruncated {
+				// fetch next batch for this slot
+				// may return no new entries
+			}
+ 		}
+		if len(topOfLists) == 0 {
+			result.IsTruncated = false
+			break // No more entries, we are done.
+		}
+		// sort top entries
+		sort.Sort(byStringName(topOfLists))
+
+		// winner is at the top of the sorted list
+		winningIndex := topOfLists[0].index
+		winner := &mapListObjInfo[winningIndex].Objects[indices[winningIndex]]
+		indices[winningIndex]++
+
+		// Copy info for winner
+		result.NextMarker = winner.Name
+		if winner.IsDir {
+			// TODO: This is a no-op at this level, as the prefixes have been filtered out at the previous level
+			result.Prefixes = append(result.Prefixes, winner.Name)
+		} else {
+			result.Objects = append(result.Objects, *winner)
+		}
+	}
+
+	// Store remaining entries for all slots for next invocation
+
+	return result, nil
 }
+
+type ListObjectsInfoWrapper struct {
+
+	ListObjectsInfo
+}
+
+type NameIndexPair struct {
+	name  string
+	index int
+}
+
+// byStringName is a collection satisfying sort.Interface.
+type byStringName []NameIndexPair
+
+func (o byStringName) Len() int           { return len(o) }
+func (o byStringName) Swap(i, j int)      { o[i], o[j] = o[j], o[i] }
+func (o byStringName) Less(i, j int) bool { return o[i].name < o[j].name }
