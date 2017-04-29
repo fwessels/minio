@@ -158,22 +158,33 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
 	}
 
+	indices := make([]int, len(bucketSlots))
 	mapListObjInfo := make(map[int]ListObjectsInfo)
 
-	// Fetch remaining entries for all slots from previous invocation
-
-	// Collect the lists for all slots for this bucket
-	for bucketIndex, bucketSlot := range bucketSlots {
-
-		// Initiate a list operation for this slot.
-		listObjInfo, err := xl.listObjects(bucketSlot, bucket, prefix, marker, delimiter, maxKeys)
-		if err != nil {
+	if xl.listState.indices != nil && xl.listState.mp != nil {
+		// Initialize the map with remaining entries
+		// for all slots from previous invocation
+		if len(indices) != len(*xl.listState.indices) || len(indices) != len(*xl.listState.mp) {
+			// TODO: What to do if list of slots has changed between invocations
 			return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
 		}
-		mapListObjInfo[bucketIndex] = listObjInfo
-	}
 
-	indices := make([]int, len(mapListObjInfo))
+		copy(indices, *xl.listState.indices)
+
+		for bucketIndex, _ := range bucketSlots {
+			mapListObjInfo[bucketIndex] = (*xl.listState.mp)[bucketIndex]
+		}
+
+		fmt.Println("Re-entering", indices)
+
+		xl.listState.indices = nil
+		xl.listState.mp = nil
+	} else {
+		// For first invocation create dummy objects to invoke listing below
+		for bucketIndex, _ := range bucketSlots {
+			mapListObjInfo[bucketIndex] = ListObjectsInfo{IsTruncated: true, NextMarker: marker}
+		}
+	}
 
 	topOfLists := make([]NameIndexPair, 0, len(mapListObjInfo))
 
@@ -184,14 +195,28 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		topOfLists = topOfLists[:0]
 
 		// Get top entries from all lists
-		for i := 0; i < len(mapListObjInfo); i++ {
-			if indices[i] < len(mapListObjInfo[i].Objects) {
-				topOfLists = append(topOfLists, NameIndexPair{name: mapListObjInfo[i].Objects[indices[i]].Name, index: i})
-			} else if mapListObjInfo[i].IsTruncated {
-				// fetch next batch for this slot
-				// may return no new entries
+		for bucketIndex := 0; bucketIndex < len(mapListObjInfo); bucketIndex++ {
+			if indices[bucketIndex] < len(mapListObjInfo[bucketIndex].Objects) {
+				topOfLists = append(topOfLists, NameIndexPair{name: mapListObjInfo[bucketIndex].Objects[indices[bucketIndex]].Name, index: bucketIndex})
+			} else if mapListObjInfo[bucketIndex].IsTruncated {
+
+				// Fetch next batch of listing for this slot of the bucket
+				fmt.Println("fetching list for slot", bucketIndex)
+				listObjInfo, err := xl.listObjects(bucketSlots[bucketIndex], bucket, prefix, mapListObjInfo[bucketIndex].NextMarker, delimiter, maxKeys)
+				if err != nil {
+					return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
+				}
+				// Store result in map
+				mapListObjInfo[bucketIndex] = listObjInfo
+
+				// Reset index for this entry
+				indices[bucketIndex] = 0
+				// Check whether we have new entries and take first one
+				if indices[bucketIndex] < len(mapListObjInfo[bucketIndex].Objects) {
+					topOfLists = append(topOfLists, NameIndexPair{name: mapListObjInfo[bucketIndex].Objects[indices[bucketIndex]].Name, index: bucketIndex})
+				}
 			}
- 		}
+		}
 		if len(topOfLists) == 0 {
 			result.IsTruncated = false
 			break // No more entries, we are done.
@@ -214,15 +239,16 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		}
 	}
 
-	// Store remaining entries for all slots for next invocation
+	if result.IsTruncated {
+		// Store remaining entries for all slots for next invocation
+		xl.listState.indices = &indices
+		xl.listState.mp = &mapListObjInfo
+		fmt.Println("Storing", xl.listState.indices)
+	}
 
 	return result, nil
 }
 
-type ListObjectsInfoWrapper struct {
-
-	ListObjectsInfo
-}
 
 type NameIndexPair struct {
 	name  string
