@@ -77,9 +77,8 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 	}
 
 	bucketSlot := xl.bucketSlots[0]
-	// "heal" true for listObjectsHeal() and false for listObjects()
-	heal := true
-	walkResultCh, endWalkCh := xl.listPool.Release(listParams{bucket, recursive, marker, prefix, heal})
+
+	walkResultCh, endWalkCh := xl.listPool.Release(listParams{bucket: bucket, recursive: recursive, marker: marker, prefix: prefix, heal: true})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := xl.isObject
@@ -128,7 +127,7 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 		}
 	}
 
-	params := listParams{bucket, recursive, nextMarker, prefix, heal}
+	params := listParams{bucket: bucket, recursive: recursive, marker: nextMarker, prefix: prefix, heal: true}
 	if !eof {
 		xl.listPool.Set(params, walkResultCh, endWalkCh)
 	}
