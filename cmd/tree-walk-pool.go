@@ -24,7 +24,7 @@ import (
 
 // Global lookup timeout.
 const (
-	globalLookupTimeout = time.Minute * 30 // 30minutes.
+	globalLookupTimeout = time.Minute * 30 // 30 minutes.
 )
 
 // listParams - list object params used for list object map
@@ -73,7 +73,7 @@ func newTreeWalkPool(timeout time.Duration) *treeWalkPool {
 // Release - selects a treeWalk from the pool based on the input
 // listParams, removes it from the pool, and returns the treeWalkResult
 // channel.
-// Returns nil if listParams does not have an asccociated treeWalk.
+// Returns nil if listParams does not have an associated treeWalk.
 func (t treeWalkPool) Release(params listParams) (resultCh chan treeWalkResult, endWalkCh chan struct{}) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -101,7 +101,7 @@ func (t treeWalkPool) Release(params listParams) (resultCh chan treeWalkResult, 
 // 1) time.After() expires after t.timeOut seconds.
 //    The expiration is needed so that the treeWalk go-routine resources are freed after a timeout
 //    if the S3 client does only partial listing of objects.
-// 2) Relase() signals the timer go-routine to end on endTimerCh.
+// 2) Release() signals the timer go-routine to end on endTimerCh.
 //    During listing the timer should not timeout and end the treeWalk go-routine, hence the
 //    timer go-routine should be ended.
 func (t treeWalkPool) Set(params listParams, resultCh chan treeWalkResult, endWalkCh chan struct{}) {
