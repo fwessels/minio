@@ -15,6 +15,10 @@
  */
 package cmd
 
+import (
+	"path"
+)
+
 // BucketSlot - Divides all available disks into slots where buckets can be created.
 type BucketSlot struct {
 	storageDisks []StorageAPI // Collection of initialized backend disks.
@@ -42,27 +46,33 @@ func getDisksForBucketSlot(storageDisks []StorageAPI, slot int) []StorageAPI {
 	return disksForBucket
 }
 
-// getSlotsForBucket - will convert incoming bucket name to
-// corresponding slots for the bucket on the erasure code backend.
-func (xl xlObjects) getSlotsForBucket(bucket string) ([]BucketSlot, error) {
-	// Verify if bucket is valid.
-	if !IsValidBucketName(bucket) {
-		return nil, traceError(BucketNameInvalid{Bucket: bucket})
+// getLoadBalancedDisks - fetches load balanced (sufficiently randomized) disk slice.
+func (bucketSlot *BucketSlot) getLoadBalancedDisks() (disks []StorageAPI) {
+
+	// Based on the random shuffling return back randomized disks.
+	for _, i := range hashOrder(UTCNow().String(), len(bucketSlot.storageDisks)) {
+		disks = append(disks, bucketSlot.storageDisks[i-1])
 	}
+	return disks
+}
 
-	bucketSlots := []BucketSlot{}
-	for _, bucketInfo := range xl.bucketSlots {
-
-		for _, disk := range bucketInfo.storageDisks {
-
-			_, err := disk.StatVol(bucket)
-			if err == nil {
-				// If corresponding directory exists, add to list
-				bucketSlots = append(bucketSlots, bucketInfo)
-				break
-			}
-
+// isObject - returns `true` if the prefix is an object i.e if
+// `xl.json` exists at the leaf, false otherwise.
+func (bucketSlot *BucketSlot) isObject(bucket, prefix string) bool {
+	for _, disk := range bucketSlot.getLoadBalancedDisks() {
+		if disk == nil {
+			continue
 		}
-	}
-	return bucketSlots, nil
+		// Check if 'prefix' is an object on this 'disk', else continue the check the next disk
+		_, err := disk.StatFile(bucket, path.Join(prefix, xlMetaJSONFile))
+		if err == nil {
+			return true
+		}
+		// Ignore for file not found,  disk not found or faulty disk.
+		if isErrIgnored(err, xlTreeWalkIgnoredErrs...) {
+			continue
+		}
+		errorIf(err, "Unable to stat a file %s/%s/%s", bucket, prefix, xlMetaJSONFile)
+	} // Exhausted all disks - return false.
+	return false
 }
