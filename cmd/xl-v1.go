@@ -268,8 +268,23 @@ func getStorageInfo(disks []StorageAPI) StorageInfo {
 
 // StorageInfo - returns underlying storage statistics.
 func (xl xlObjects) StorageInfo() StorageInfo {
-	storageInfo := getStorageInfo(xl.storageDisks)
-	storageInfo.Backend.ReadQuorum = xl.readQuorum
-	storageInfo.Backend.WriteQuorum = xl.writeQuorum
-	return storageInfo
+	var storageInfo *StorageInfo
+	for _, bucketSlot := range xl.bucketSlots {
+		si := getStorageInfo(bucketSlot.storageDisks)
+		if storageInfo == nil {
+			storageInfo = &si
+			storageInfo.Backend.ReadQuorum = bucketSlot.readQuorum
+			storageInfo.Backend.WriteQuorum = bucketSlot.writeQuorum
+		} else {
+			storageInfo.Total += si.Total
+			storageInfo.Free += si.Free
+
+			// How to communicate status to user:
+			// 32 Online, 0 Offline. We can withstand [4] more drive failure(s).
+			storageInfo.Backend.OnlineDisks += si.Backend.OnlineDisks
+			storageInfo.Backend.OfflineDisks += si.Backend.OfflineDisks
+			// Need to update Backend.ReadQuorum / Backend.WriteQuorum ??
+		}
+	}
+	return *storageInfo
 }
