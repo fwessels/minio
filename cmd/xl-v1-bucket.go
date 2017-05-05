@@ -284,6 +284,9 @@ func (xl xlObjects) DeleteBucket(bucket string) error {
 	// TODO: Decide what to do if partial success, ie delete for one or more slots succesful and unsuccesful for others
 	// Get the list of slots that we need to delete
 	bucketSlots, err := xl.getSlotsForBucket(bucket)
+	if err != nil {
+		return err
+	}
 
 	for _, bucketSlot := range bucketSlots {
 		err = xl.deleteBucket(&bucketSlot, bucket)
