@@ -186,9 +186,46 @@ func (xl xlObjects) GetBucketInfo(bucket string) (BucketInfo, error) {
 	return bucketInfo, nil
 }
 
-// listBuckets - returns list of all buckets from a disk picked at random.
+// listBuckets - returns list of all buckets from all slots
+// by picking a random disk per slot.
 func (xl xlObjects) listBuckets() (bucketsInfo []BucketInfo, err error) {
-	for _, disk := range xl.getLoadBalancedDisks() {
+
+	bucketMap := make(map[string]BucketInfo)
+
+	for _, bucketSlot := range xl.bucketSlots {
+
+		// Get list of disks for this slot
+		disks := bucketSlot.getLoadBalancedDisks()
+
+		// Get the buckets for this slot
+		bucketInfos, err := listBucketsPerSlot(disks)
+		if err != nil {
+			return nil, err
+		}
+
+		// Iterate over buckets, only adding when new
+		for _, bucketInfo := range bucketInfos {
+			bi, found := bucketMap[bucketInfo.Name]
+			if !found {
+				bucketMap[bucketInfo.Name] = bucketInfo
+			} else if bi.Created.UnixNano() > bucketInfo.Created.UnixNano() {
+				// Take the time of the earliest created directory
+				bucketMap[bucketInfo.Name] = bucketInfo
+			}
+		}
+	}
+
+	// Copy map of bucket infos to list
+	for _, bucketInfo := range bucketMap {
+		bucketsInfo = append(bucketsInfo, bucketInfo)
+	}
+
+	return
+}
+
+// listBucketsPerSlot - returns list of all buckets from a disk picked at random.
+func listBucketsPerSlot(disks []StorageAPI) (bucketsInfo []BucketInfo, err error) {
+	for _, disk := range disks {
 		if disk == nil {
 			continue
 		}
