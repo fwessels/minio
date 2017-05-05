@@ -177,8 +177,15 @@ func (xl xlObjects) Shutdown() error {
 		// Otherwise this is a no-op.
 		if disk == nil {
 			continue
+	for _, bucketSlot := range xl.bucketSlots {
+		for _, disk := range bucketSlot.storageDisks {
+			// This closes storage rpc client connections if any.
+			// Otherwise this is a no-op.
+			if disk == nil {
+				continue
+			}
+			disk.Close()
 		}
-		disk.Close()
 	}
 	return nil
 }
