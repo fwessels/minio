@@ -761,13 +761,19 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 // all the disks in parallel, including `xl.json` associated with the
 // object.
 func (xl xlObjects) deleteObject(bucket, object string) error {
+
+	bucketSlot, err := xl.getReadableSlot(bucket, object)
+	if err != nil {
+		return toObjectErr(traceError(err), bucket, object)
+	}
+
 	// Initialize sync waitgroup.
 	var wg = &sync.WaitGroup{}
 
 	// Initialize list of errors.
-	var dErrs = make([]error, len(xl.storageDisks))
+	var dErrs = make([]error, len(bucketSlot.storageDisks))
 
-	for index, disk := range xl.storageDisks {
+	for index, disk := range bucketSlot.storageDisks {
 		if disk == nil {
 			dErrs[index] = traceError(errDiskNotFound)
 			continue
@@ -785,7 +791,7 @@ func (xl xlObjects) deleteObject(bucket, object string) error {
 	// Wait for all routines to finish.
 	wg.Wait()
 
-	return reduceWriteQuorumErrs(dErrs, objectOpIgnoredErrs, xl.writeQuorum)
+	return reduceWriteQuorumErrs(dErrs, objectOpIgnoredErrs, bucketSlot.writeQuorum)
 }
 
 // DeleteObject - deletes an object, this call doesn't necessary reply
