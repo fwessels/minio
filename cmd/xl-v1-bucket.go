@@ -113,8 +113,24 @@ func undoMakeBucket(storageDisks []StorageAPI, bucket string) {
 
 // getBucketInfo - returns the BucketInfo from one of the load balanced disks.
 func (xl xlObjects) getBucketInfo(bucketName string) (bucketInfo BucketInfo, err error) {
+
+	for _, bucketSlot := range xl.bucketSlots {
+		bucketInfoSlot, serr := getBucketInfoForSlot(&bucketSlot, bucketName)
+		if serr == nil {
+			if bucketInfo.Name == "" || bucketInfo.Created.UnixNano() > bucketInfoSlot.Created.UnixNano() {
+				bucketInfo = bucketInfoSlot
+			}
+		} else if !isErr(serr, errVolumeNotFound) { // Keep searching when not found in this slot
+			return BucketInfo{}, serr
+		}
+	}
+	return bucketInfo, nil
+}
+
+// getBucketInfoForSlot - returns the BucketInfo from one of the load balanced disks.
+func getBucketInfoForSlot(bucketSlot *BucketSlot, bucketName string) (bucketInfo BucketInfo, err error) {
 	var bucketErrs []error
-	for _, disk := range xl.getLoadBalancedDisks() {
+	for _, disk := range bucketSlot.getLoadBalancedDisks() {
 		if disk == nil {
 			bucketErrs = append(bucketErrs, errDiskNotFound)
 			continue
@@ -140,7 +156,7 @@ func (xl xlObjects) getBucketInfo(bucketName string) (bucketInfo BucketInfo, err
 	// reduce to one error based on read quorum.
 	// `nil` is deliberately passed for ignoredErrs
 	// because these errors were already ignored.
-	return BucketInfo{}, reduceReadQuorumErrs(bucketErrs, nil, xl.readQuorum)
+	return BucketInfo{}, reduceReadQuorumErrs(bucketErrs, nil, bucketSlot.readQuorum)
 }
 
 // GetBucketInfo - returns BucketInfo for a bucket.
