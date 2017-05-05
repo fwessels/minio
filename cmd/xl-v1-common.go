@@ -64,22 +64,24 @@ func (xl xlObjects) parentDirIsObject(bucket, parent string) bool {
 // isObject - returns `true` if the prefix is an object i.e if
 // `xl.json` exists at the leaf, false otherwise.
 func (xl xlObjects) isObject(bucket, prefix string) (ok bool) {
-	for _, disk := range xl.getLoadBalancedDisks() {
-		if disk == nil {
-			continue
+	_, _, ok = xl.getObjectSlot(bucket, prefix)
+	return ok
+}
+
+// getObjectSlot - returns slot if the prefix is an object
+// i.e if  `xl.json` exists at the leaf in one of the bucket slots.
+func (xl xlObjects) getObjectSlot(bucket, prefix string) (bucketSlots []BucketSlot, bucketSlot BucketSlot, ok bool) {
+	var err error
+	bucketSlots, err = xl.getSlotsForBucket(bucket)
+	if err == nil {
+		for _, slot := range bucketSlots {
+			if slot.isObject(bucket, prefix) {
+				bucketSlot, ok = slot, true
+				break
+			}
 		}
-		// Check if 'prefix' is an object on this 'disk', else continue the check the next disk
-		_, err := disk.StatFile(bucket, path.Join(prefix, xlMetaJSONFile))
-		if err == nil {
-			return true
-		}
-		// Ignore for file not found,  disk not found or faulty disk.
-		if isErrIgnored(err, xlTreeWalkIgnoredErrs...) {
-			continue
-		}
-		errorIf(err, "Unable to stat a file %s/%s/%s", bucket, prefix, xlMetaJSONFile)
-	} // Exhausted all disks - return false.
-	return false
+	}
+	return
 }
 
 // Calculate the space occupied by an object in a single disk
@@ -93,4 +95,27 @@ func (xl xlObjects) sizeOnDisk(fileSize int64, blockSize int64, dataBlocks int) 
 	}
 
 	return sizeInDisk
+}
+
+// getReadableSlot - search if object exists in one of the bucket slots
+func (xl *xlObjects) getReadableSlot(bucket, object string) (BucketSlot, error) {
+	_, bucketSlot, exists := xl.getObjectSlot(bucket, object)
+	if exists {
+		return bucketSlot, nil
+	}
+	return BucketSlot{}, traceError(errFileNotFound)
+}
+
+// getWritableSlot - search if object already exists in one
+// of the bucket slots and return the slot if so. Otherwise assign the
+// object to a new slot
+func (xl *xlObjects) getWritableSlot(bucket, object string) (BucketSlot, error) {
+	bucketSlots, bucketSlot, exists := xl.getObjectSlot(bucket, object)
+	if exists {
+		return bucketSlot, nil
+	}
+
+	// TODO: Properly schedule in which slot to put the new object
+	slot := rand.Intn(len(bucketSlots))
+	return bucketSlots[slot], nil
 }
