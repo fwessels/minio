@@ -51,6 +51,12 @@ const (
 	minErasureBlocks = 4
 )
 
+type listState struct {
+	indices    *[]int
+	mapLOI     *map[int]ListObjectsInfo
+	endTimerCh chan<- struct{} // To signal when timer go-routine should end.
+}
+
 // xlObjects - Implements XL object layer.
 type xlObjects struct {
 	mutex       *sync.Mutex
@@ -64,6 +70,9 @@ type xlObjects struct {
 
 	// Object cache enabled.
 	objCacheEnabled bool
+
+	// ListState pool management
+	listStatePool *listStatePool
 }
 
 // list of all errors that can be ignored in tree walk operation in XL

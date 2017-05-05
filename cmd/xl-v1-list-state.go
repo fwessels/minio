@@ -61,7 +61,7 @@ func (l *listStatePool) Release(params listParams) (*[]int, *map[int]ListObjects
 				delete(l.pool, params)
 			}
 			state.endTimerCh <- struct{}{}	// Instruct timer to stop
-			return state.indices, state.mp
+			return state.indices, state.mapLOI
 		}
 	}
 	// Release return nil if params not found.
@@ -83,8 +83,8 @@ func (l listStatePool) Set(params listParams, indices *[]int, mp *map[int]ListOb
 	// Should be a buffered channel so that Release() never blocks.
 	endTimerCh := make(chan struct{}, 1)
 	state := listState{
-		indices:   indices,
-		mp:  mp,
+		indices:    indices,
+		mapLOI:     mp,
 		endTimerCh: endTimerCh,
 	}
 	// Append new list state.
