@@ -650,7 +650,7 @@ func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, s
 	defer xl.deleteObject(minioMetaTmpBucket, tmpPart)
 
 	if size > 0 {
-		if pErr := xl.prepareFile(minioMetaTmpBucket, tmpPartPath, size, onlineDisks, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks); err != nil {
+		if pErr := xl.prepareFile(&bucketSlot, minioMetaTmpBucket, tmpPartPath, size, onlineDisks, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks); err != nil {
 			return PartInfo{}, toObjectErr(pErr, bucket, object)
 
 		}
