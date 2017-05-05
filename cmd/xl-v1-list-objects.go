@@ -160,26 +160,24 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 	indices := make([]int, len(bucketSlots))
 	mapListObjInfo := make(map[int]ListObjectsInfo)
 
-	if xl.listState.indices != nil && xl.listState.mp != nil {
-		// Initialize the map with remaining entries
-		// for all slots from previous invocation
-		if len(indices) != len(*xl.listState.indices) || len(indices) != len(*xl.listState.mp) {
+	_indices, _mapListObjInfo := xl.listStatePool.Release(listParams{bucket: bucket, marker: marker, prefix: prefix, combine: true})
+	if _indices != nil && _mapListObjInfo != nil {
+		// Initialize the map with remaining entries for all slots from previous invocation
+		if len(indices) != len(*_indices) || len(indices) != len(*_mapListObjInfo) {
 			// TODO: What to do if list of slots has changed between invocations
 			return ListObjectsInfo{}, toObjectErr(err, bucket, prefix)
 		}
 
-		copy(indices, *xl.listState.indices)
+		copy(indices, *_indices)
 
+		// Initialize map from previous invocation
 		for bucketIndex, _ := range bucketSlots {
-			mapListObjInfo[bucketIndex] = (*xl.listState.mp)[bucketIndex]
+			mapListObjInfo[bucketIndex] = (*_mapListObjInfo)[bucketIndex]
 		}
 
 		fmt.Println("Re-entering", indices)
-
-		xl.listState.indices = nil
-		xl.listState.mp = nil
 	} else {
-		// For first invocation create dummy objects to invoke listing below
+		// For first invocation create dummy objects to trigger invoking listing below
 		for bucketIndex, _ := range bucketSlots {
 			mapListObjInfo[bucketIndex] = ListObjectsInfo{IsTruncated: true, NextMarker: marker}
 		}
@@ -240,9 +238,10 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 
 	if result.IsTruncated {
 		// Store remaining entries for all slots for next invocation
-		xl.listState.indices = &indices
-		xl.listState.mp = &mapListObjInfo
-		fmt.Println("Storing", xl.listState.indices)
+		fmt.Println("Storing", indices)
+
+		params := listParams{bucket: bucket, marker: result.Objects[len(result.Objects)-1].Name, prefix: prefix, combine: true}
+		xl.listStatePool.Set(params, &indices, &mapListObjInfo)
 	}
 
 	return result, nil

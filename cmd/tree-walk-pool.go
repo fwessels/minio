@@ -34,6 +34,7 @@ type listParams struct {
 	marker    string
 	prefix    string
 	heal      bool
+	combine	  bool
 }
 
 // errWalkAbort - returned by doTreeWalk() if it returns prematurely.
