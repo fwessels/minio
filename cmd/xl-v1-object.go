@@ -169,14 +169,18 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 		return traceError(errUnexpected)
 	}
 
+	bucketSlot, err := xl.getReadableSlot(bucket, object)
+	if err != nil {
+		return err
+	}
 	// Read metadata associated with the object from all disks.
-	metaArr, errs := readAllXLMetadata(xl.storageDisks, bucket, object)
-	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, xl.readQuorum); reducedErr != nil {
+	metaArr, errs := readAllXLMetadata(bucketSlot.storageDisks, bucket, object)
+	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, bucketSlot.readQuorum); reducedErr != nil {
 		return toObjectErr(reducedErr, bucket, object)
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(xl.storageDisks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(bucketSlot.storageDisks, metaArr, errs)
 
 	// Pick latest valid metadata.
 	xlMeta, err := pickValidXLMeta(metaArr, modTime)
