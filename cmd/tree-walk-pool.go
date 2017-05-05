@@ -132,6 +132,7 @@ func (t treeWalkPool) Set(params listParams, resultCh chan treeWalkResult, endWa
 				for i, walk := range walks {
 					if walk == walkInfo {
 						walks = append(walks[:i], walks[i+1:]...)
+						break
 					}
 				}
 				if len(walks) == 0 {
