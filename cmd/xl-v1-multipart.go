@@ -33,11 +33,9 @@ import (
 )
 
 // updateUploadJSON - add or remove upload ID info in all `uploads.json`.
-func (xl xlObjects) updateUploadJSON(bucket, object, uploadID string, initiated time.Time, isRemove bool) error {
+func (xl xlObjects) updateUploadJSON(bucketSlot BucketSlot, bucket, object, uploadID string, initiated time.Time, isRemove bool) error {
 	uploadsPath := path.Join(bucket, object, uploadsJSONFile)
 	tmpUploadsPath := mustGetUUID()
-
-	bucketSlot := xl.bucketSlots[0]
 
 	// slice to store errors from disks
 	errs := make([]error, len(bucketSlot.storageDisks))
@@ -154,13 +152,13 @@ func (xl xlObjects) updateUploadJSON(bucket, object, uploadID string, initiated 
 }
 
 // addUploadID - add upload ID and its initiated time to 'uploads.json'.
-func (xl xlObjects) addUploadID(bucket, object string, uploadID string, initiated time.Time) error {
-	return xl.updateUploadJSON(bucket, object, uploadID, initiated, false)
+func (xl xlObjects) addUploadID(bucketSlot BucketSlot, bucket, object string, uploadID string, initiated time.Time) error {
+	return xl.updateUploadJSON(bucketSlot, bucket, object, uploadID, initiated, false)
 }
 
 // removeUploadID - remove upload ID in 'uploads.json'.
-func (xl xlObjects) removeUploadID(bucket, object string, uploadID string) error {
-	return xl.updateUploadJSON(bucket, object, uploadID, time.Time{}, true)
+func (xl xlObjects) removeUploadID(bucketSlot BucketSlot, bucket, object string, uploadID string) error {
+	return xl.updateUploadJSON(bucketSlot, bucket, object, uploadID, time.Time{}, true)
 }
 
 // Returns if the prefix is a multipart upload.
@@ -182,16 +180,16 @@ func (xl xlObjects) isMultipartUpload(bucket, prefix string) bool {
 	return false
 }
 
-// isUploadIDExists - verify if a given uploadID exists and is valid.
-func (xl xlObjects) isUploadIDExists(bucket, object, uploadID string) bool {
+// doesUploadIDExist - verify if a given uploadID exists and is valid.
+func (xl xlObjects) doesUploadIDExist(bucket, object, uploadID string) (bucketSlot BucketSlot, exists bool) {
 	uploadIDPath := path.Join(bucket, object, uploadID)
-	return xl.isObject(minioMetaMultipartBucket, uploadIDPath)
+	_, bucketSlot, exists = xl.getObjectSlot(minioMetaMultipartBucket, uploadIDPath)
+	return
 }
 
-// Removes part given by partName belonging to a mulitpart upload from minioMetaBucket
-func (xl xlObjects) removeObjectPart(bucket, object, uploadID, partName string) {
+// Removes part given by partName belonging to a multipart upload from minioMetaBucket
+func (xl xlObjects) removeObjectPart(bucketSlot BucketSlot, bucket, object, uploadID, partName string) {
 	curpartPath := path.Join(bucket, object, uploadID, partName)
-	bucketSlot := xl.bucketSlots[0]
 	wg := sync.WaitGroup{}
 	for i, disk := range bucketSlot.storageDisks {
 		if disk == nil {
@@ -210,10 +208,10 @@ func (xl xlObjects) removeObjectPart(bucket, object, uploadID, partName string) 
 }
 
 // statPart - returns fileInfo structure for a successful stat on part file.
-func (xl xlObjects) statPart(bucket, object, uploadID, partName string) (fileInfo FileInfo, err error) {
+func (xl xlObjects) statPart(bucketSlot BucketSlot, bucket, object, uploadID, partName string) (fileInfo FileInfo, err error) {
 	var ignoredErrs []error
 	partNamePath := path.Join(bucket, object, uploadID, partName)
-	for _, disk := range xl.getLoadBalancedDisks() {
+	for _, disk := range bucketSlot.getLoadBalancedDisks() {
 		if disk == nil {
 			ignoredErrs = append(ignoredErrs, errDiskNotFound)
 			continue
@@ -232,7 +230,6 @@ func (xl xlObjects) statPart(bucket, object, uploadID, partName string) (fileInf
 	}
 	// If all errors were ignored, reduce to maximal occurrence
 	// based on the read quorum.
-	bucketSlot := xl.bucketSlots[0]
 	return FileInfo{}, reduceReadQuorumErrs(ignoredErrs, nil, bucketSlot.readQuorum)
 }
 
@@ -306,7 +303,6 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		multipartMarkerPath = pathJoin(bucket, keyMarker)
 	}
 	var uploads []uploadMetadata
-	var err error
 	var eof bool
 	// List all upload ids for the keyMarker starting from
 	// uploadIDMarker first.
@@ -315,7 +311,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		keyMarkerLock := globalNSMutex.NewNSLock(minioMetaMultipartBucket,
 			pathJoin(bucket, keyMarker))
 		keyMarkerLock.RLock()
-		for _, disk := range xl.getLoadBalancedDisks() {
+		for _, disk := range bucketSlot.getLoadBalancedDisks() {
 			if disk == nil {
 				continue
 			}
@@ -342,7 +338,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		if walkerCh == nil {
 			walkerDoneCh = make(chan struct{})
 			isLeaf := xl.isMultipartUpload
-			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, xl.getLoadBalancedDisks()...)
+			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, bucketSlot.getLoadBalancedDisks()...)
 			walkerCh = startTreeWalk(minioMetaMultipartBucket, multipartPrefixPath, multipartMarkerPath, recursive, listDir, isLeaf, walkerDoneCh)
 		}
 		// Collect uploads until we have reached maxUploads count to 0.
@@ -381,7 +377,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 				pathJoin(bucket, entry))
 			entryLock.RLock()
 			var disk StorageAPI
-			for _, disk = range xl.getLoadBalancedDisks() {
+			for _, disk = range bucketSlot.getLoadBalancedDisks() {
 				if disk == nil {
 					continue
 				}
@@ -468,7 +464,10 @@ func (xl xlObjects) ListMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 // disks. `uploads.json` carries metadata regarding on-going multipart
 // operation(s) on the object.
 func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[string]string) (string, error) {
-	bucketSlot := xl.bucketSlots[0]
+	bucketSlot, err := xl.getWritableSlot(bucket, object)
+	if err != nil {
+		return "", toObjectErr(traceError(err), bucket, object)
+	}
 	xlMeta := newXLMetaV1(object, bucketSlot.dataBlocks, bucketSlot.parityBlocks)
 	// If not set default to "application/octet-stream"
 	if meta["content-type"] == "" {
@@ -495,7 +494,7 @@ func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[st
 	uploadIDPath := path.Join(bucket, object, uploadID)
 	tempUploadIDPath := uploadID
 	// Write updated `xl.json` to all disks.
-	err := writeSameXLMetadata(bucketSlot.storageDisks, minioMetaTmpBucket, tempUploadIDPath, xlMeta, bucketSlot.writeQuorum, bucketSlot.readQuorum)
+	err = writeSameXLMetadata(bucketSlot.storageDisks, minioMetaTmpBucket, tempUploadIDPath, xlMeta, bucketSlot.writeQuorum, bucketSlot.readQuorum)
 	if err != nil {
 		return "", toObjectErr(err, minioMetaTmpBucket, tempUploadIDPath)
 	}
@@ -512,7 +511,7 @@ func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[st
 
 	initiated := UTCNow()
 	// Create or update 'uploads.json'
-	if err = xl.addUploadID(bucket, object, uploadID, initiated); err != nil {
+	if err = xl.addUploadID(bucketSlot, bucket, object, uploadID, initiated); err != nil {
 		return "", err
 	}
 	// Return success.
@@ -558,12 +557,11 @@ func (xl xlObjects) CopyObjectPart(srcBucket, srcObject, dstBucket, dstObject, u
 	}()
 
 	partInfo, err := xl.PutObjectPart(dstBucket, dstObject, uploadID, partID, length, pipeReader, "", "")
+	// Explicitly close the reader.
+	pipeReader.Close()
 	if err != nil {
 		return PartInfo{}, toObjectErr(err, dstBucket, dstObject)
 	}
-
-	// Explicitly close the reader.
-	pipeReader.Close()
 
 	// Success.
 	return partInfo, nil
@@ -587,12 +585,12 @@ func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, s
 	preUploadIDLock := globalNSMutex.NewNSLock(minioMetaMultipartBucket, uploadIDPath)
 	preUploadIDLock.RLock()
 	// Validates if upload ID exists.
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
+	bucketSlot, exists := xl.doesUploadIDExist(bucket, object, uploadID)
+	if !exists {
 		preUploadIDLock.RUnlock()
 		return PartInfo{}, traceError(InvalidUploadID{UploadID: uploadID})
 	}
 
-	bucketSlot := xl.bucketSlots[0]
 	// Read metadata associated with the object from all disks.
 	partsMetadata, errs = readAllXLMetadata(bucketSlot.storageDisks, minioMetaMultipartBucket,
 		uploadIDPath)
@@ -701,7 +699,8 @@ func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, s
 	defer postUploadIDLock.Unlock()
 
 	// Validate again if upload ID still exists.
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
+	bucketSlot, exists = xl.doesUploadIDExist(bucket, object, uploadID)
+	if !exists {
 		return PartInfo{}, traceError(InvalidUploadID{UploadID: uploadID})
 	}
 
@@ -759,7 +758,7 @@ func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, s
 		return PartInfo{}, toObjectErr(rErr, minioMetaMultipartBucket, uploadIDPath)
 	}
 
-	fi, err := xl.statPart(bucket, object, uploadID, partSuffix)
+	fi, err := xl.statPart(bucketSlot, bucket, object, uploadID, partSuffix)
 	if err != nil {
 		return PartInfo{}, toObjectErr(rErr, minioMetaMultipartBucket, partSuffix)
 	}
@@ -775,12 +774,12 @@ func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, s
 
 // listObjectParts - wrapper reading `xl.json` for a given object and
 // uploadID. Lists all the parts captured inside `xl.json` content.
-func (xl xlObjects) listObjectParts(bucket, object, uploadID string, partNumberMarker, maxParts int) (ListPartsInfo, error) {
+func (xl xlObjects) listObjectParts(bucketSlot BucketSlot, bucket, object, uploadID string, partNumberMarker, maxParts int) (ListPartsInfo, error) {
 	result := ListPartsInfo{}
 
 	uploadIDPath := path.Join(bucket, object, uploadID)
 
-	xlParts, err := xl.readXLMetaParts(minioMetaMultipartBucket, uploadIDPath)
+	xlParts, err := xl.readXLMetaParts(bucketSlot, minioMetaMultipartBucket, uploadIDPath)
 	if err != nil {
 		return ListPartsInfo{}, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
 	}
@@ -810,7 +809,7 @@ func (xl xlObjects) listObjectParts(bucket, object, uploadID string, partNumberM
 	count := maxParts
 	for _, part := range parts {
 		var fi FileInfo
-		fi, err = xl.statPart(bucket, object, uploadID, part.Name)
+		fi, err = xl.statPart(bucketSlot, bucket, object, uploadID, part.Name)
 		if err != nil {
 			return ListPartsInfo{}, toObjectErr(err, minioMetaBucket, path.Join(uploadID, part.Name))
 		}
@@ -855,10 +854,11 @@ func (xl xlObjects) ListObjectParts(bucket, object, uploadID string, partNumberM
 	uploadIDLock.Lock()
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
+	bucketSlot, exists := xl.doesUploadIDExist(bucket, object, uploadID)
+	if !exists {
 		return ListPartsInfo{}, traceError(InvalidUploadID{UploadID: uploadID})
 	}
-	result, err := xl.listObjectParts(bucket, object, uploadID, partNumberMarker, maxParts)
+	result, err := xl.listObjectParts(bucketSlot, bucket, object, uploadID, partNumberMarker, maxParts)
 	return result, err
 }
 
@@ -884,7 +884,8 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 	uploadIDLock.Lock()
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
+	bucketSlot, exists := xl.doesUploadIDExist(bucket, object, uploadID)
+	if !exists {
 		return ObjectInfo{}, traceError(InvalidUploadID{UploadID: uploadID})
 	}
 
@@ -901,7 +902,6 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 	}
 
 	uploadIDPath := pathJoin(bucket, object, uploadID)
-	bucketSlot := xl.bucketSlots[0]
 
 	// Read metadata associated with the object from all disks.
 	partsMetadata, errs := readAllXLMetadata(bucketSlot.storageDisks, minioMetaMultipartBucket, uploadIDPath)
@@ -1039,7 +1039,7 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 			// Request 3: PutObjectPart 2
 			// Request 4: CompleteMultipartUpload --part 2
 			// N.B. 1st part is not present. This part should be removed from the storage.
-			xl.removeObjectPart(bucket, object, uploadID, curpart.Name)
+			xl.removeObjectPart(bucketSlot, bucket, object, uploadID, curpart.Name)
 		}
 	}
 
@@ -1057,7 +1057,7 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 	defer objectMPartPathLock.Unlock()
 
 	// remove entry from uploads.json with quorum
-	if err = xl.removeUploadID(bucket, object, uploadID); err != nil {
+	if err = xl.removeUploadID(bucketSlot, bucket, object, uploadID); err != nil {
 		return ObjectInfo{}, toObjectErr(err, minioMetaMultipartBucket, path.Join(bucket, object))
 	}
 
@@ -1078,8 +1078,7 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 }
 
 // Wrapper which removes all the uploaded parts.
-func (xl xlObjects) cleanupUploadedParts(bucket, object, uploadID string) error {
-	bucketSlot := xl.bucketSlots[0]
+func (xl xlObjects) cleanupUploadedParts(bucketSlot BucketSlot, bucket, object, uploadID string) error {
 	var errs = make([]error, len(bucketSlot.storageDisks))
 	var wg = &sync.WaitGroup{}
 
@@ -1113,9 +1112,9 @@ func (xl xlObjects) cleanupUploadedParts(bucket, object, uploadID string) error 
 // transaction, deletes uploadID entry from `uploads.json` and purges
 // the directory at '.minio.sys/multipart/bucket/object/uploadID' holding
 // all the upload parts.
-func (xl xlObjects) abortMultipartUpload(bucket, object, uploadID string) (err error) {
+func (xl xlObjects) abortMultipartUpload(bucketSlot BucketSlot, bucket, object, uploadID string) (err error) {
 	// Cleanup all uploaded parts.
-	if err = xl.cleanupUploadedParts(bucket, object, uploadID); err != nil {
+	if err = xl.cleanupUploadedParts(bucketSlot, bucket, object, uploadID); err != nil {
 		return toObjectErr(err, bucket, object)
 	}
 
@@ -1127,7 +1126,7 @@ func (xl xlObjects) abortMultipartUpload(bucket, object, uploadID string) (err e
 	defer objectMPartPathLock.Unlock()
 
 	// remove entry from uploads.json with quorum
-	if err = xl.removeUploadID(bucket, object, uploadID); err != nil {
+	if err = xl.removeUploadID(bucketSlot, bucket, object, uploadID); err != nil {
 		return toObjectErr(err, bucket, object)
 	}
 
@@ -1158,8 +1157,9 @@ func (xl xlObjects) AbortMultipartUpload(bucket, object, uploadID string) error 
 	uploadIDLock.Lock()
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
+	bucketSlot, exists := xl.doesUploadIDExist(bucket, object, uploadID)
+	if !exists {
 		return traceError(InvalidUploadID{UploadID: uploadID})
 	}
-	return xl.abortMultipartUpload(bucket, object, uploadID)
+	return xl.abortMultipartUpload(bucketSlot, bucket, object, uploadID)
 }
