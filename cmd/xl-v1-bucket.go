@@ -19,6 +19,7 @@ package cmd
 import (
 	"sort"
 	"sync"
+	"math/rand"
 )
 
 // list all errors that can be ignore in a bucket operation.
@@ -36,14 +37,26 @@ func (xl xlObjects) MakeBucket(bucket string) error {
 		return traceError(BucketNameInvalid{Bucket: bucket})
 	}
 
+	bucketSlots, err := xl.getSlotsForBucket(bucket)
+	if err != nil {
+		return err
+	} else if len(bucketSlots) > 0 {
+		// Bucket exists so exit out early
+		return nil
+	}
+
+	// TODO: Properly schedule where to create the new bucket (find empty slot or less filled slot)
+	slot := rand.Intn(len(xl.bucketSlots))
+	bucketSlot := xl.bucketSlots[slot]
+
 	// Initialize sync waitgroup.
 	var wg = &sync.WaitGroup{}
 
 	// Initialize list of errors.
-	var dErrs = make([]error, len(xl.storageDisks))
+	var dErrs = make([]error, len(bucketSlot.storageDisks))
 
 	// Make a volume entry on all underlying storage disks.
-	for index, disk := range xl.storageDisks {
+	for index, disk := range bucketSlot.storageDisks {
 		if disk == nil {
 			dErrs[index] = traceError(errDiskNotFound)
 			continue
@@ -62,10 +75,10 @@ func (xl xlObjects) MakeBucket(bucket string) error {
 	// Wait for all make vol to finish.
 	wg.Wait()
 
-	err := reduceWriteQuorumErrs(dErrs, bucketOpIgnoredErrs, xl.writeQuorum)
+	err = reduceWriteQuorumErrs(dErrs, bucketOpIgnoredErrs, bucketSlot.writeQuorum)
 	if errorCause(err) == errXLWriteQuorum {
 		// Purge successfully created buckets if we don't have writeQuorum.
-		undoMakeBucket(xl.storageDisks, bucket)
+		undoMakeBucket(bucketSlot.storageDisks, bucket)
 	}
 	return toObjectErr(err, bucket)
 }
