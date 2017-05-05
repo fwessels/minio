@@ -60,14 +60,18 @@ func (xl xlObjects) prepareFile(bucket, object string, size int64, onlineDisks [
 // if source object and destination object are same we only
 // update metadata.
 func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string, metadata map[string]string) (ObjectInfo, error) {
+	bucketSlot, err := xl.getReadableSlot(srcBucket, srcObject)
+	if err != nil {
+		return ObjectInfo{}, toObjectErr(err, srcBucket, srcObject)
+	}
 	// Read metadata associated with the object from all disks.
-	metaArr, errs := readAllXLMetadata(xl.storageDisks, srcBucket, srcObject)
-	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, xl.readQuorum); reducedErr != nil {
+	metaArr, errs := readAllXLMetadata(bucketSlot.storageDisks, srcBucket, srcObject)
+	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, bucketSlot.readQuorum); reducedErr != nil {
 		return ObjectInfo{}, toObjectErr(reducedErr, srcBucket, srcObject)
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(xl.storageDisks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(bucketSlot.storageDisks, metaArr, errs)
 
 	// Pick latest valid metadata.
 	xlMeta, err := pickValidXLMeta(metaArr, modTime)
@@ -85,7 +89,7 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	cpMetadataOnly := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
 	if cpMetadataOnly {
 		xlMeta.Meta = metadata
-		partsMetadata := make([]xlMetaV1, len(xl.storageDisks))
+		partsMetadata := make([]xlMetaV1, len(bucketSlot.storageDisks))
 		// Update `xl.json` content on each disks.
 		for index := range partsMetadata {
 			partsMetadata[index] = xlMeta
@@ -94,11 +98,11 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 		tempObj := mustGetUUID()
 
 		// Write unique `xl.json` for each disk.
-		if err = writeUniqueXLMetadata(onlineDisks, minioMetaTmpBucket, tempObj, partsMetadata, xl.writeQuorum); err != nil {
+		if err = writeUniqueXLMetadata(onlineDisks, minioMetaTmpBucket, tempObj, partsMetadata, bucketSlot.writeQuorum); err != nil {
 			return ObjectInfo{}, toObjectErr(err, srcBucket, srcObject)
 		}
 		// Rename atomically `xl.json` from tmp location to destination for each disk.
-		if err = renameXLMetadata(onlineDisks, minioMetaTmpBucket, tempObj, srcBucket, srcObject, xl.writeQuorum); err != nil {
+		if err = renameXLMetadata(onlineDisks, minioMetaTmpBucket, tempObj, srcBucket, srcObject, bucketSlot.writeQuorum); err != nil {
 			return ObjectInfo{}, toObjectErr(err, srcBucket, srcObject)
 		}
 
