@@ -16,15 +16,30 @@
 
 package cmd
 
-import "path"
+import (
+	"math/rand"
+	"path"
+)
 
-// getLoadBalancedDisks - fetches load balanced (sufficiently randomized) disk slice.
-func (xl xlObjects) getLoadBalancedDisks() (disks []StorageAPI) {
-	// Based on the random shuffling return back randomized disks.
-	for _, i := range hashOrder(UTCNow().String(), len(xl.storageDisks)) {
-		disks = append(disks, xl.storageDisks[i-1])
+// getSlotsForBucket - will convert incoming bucket name to
+// corresponding slots for the bucket on the erasure code backend.
+func (xl xlObjects) getSlotsForBucket(bucket string) (bucketSlots []BucketSlot, e error) {
+	// Verify if bucket is valid.
+	if !IsValidBucketName(bucket) {
+		return nil, traceError(BucketNameInvalid{Bucket: bucket})
 	}
-	return disks
+
+	for _, bucketInfo := range xl.bucketSlots {
+		for _, disk := range bucketInfo.storageDisks {
+			_, err := disk.StatVol(bucket)
+			if err == nil {
+				// If corresponding directory exists, add to list
+				bucketSlots = append(bucketSlots, bucketInfo)
+				break
+			}
+		}
+	}
+	return bucketSlots, nil
 }
 
 // This function does the following check, suppose
