@@ -16,6 +16,9 @@
 
 package cmd
 
+// TODO: Prevent 'overlapping' disk path (no child within parents)
+// TODO: Work out disk of bucket
+
 import (
 	"crypto/md5"
 	"encoding/hex"
@@ -23,6 +26,7 @@ import (
 	"hash"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +34,7 @@ import (
 
 	"github.com/minio/minio/pkg/lock"
 	"github.com/minio/sha256-simd"
+	"path"
 )
 
 // fsObjects - Implements fs object layer.
@@ -47,7 +52,7 @@ type fsObjects struct {
 	// ListObjects pool management.
 	listPool *treeWalkPool
 
-	// To manage the appendRoutine go0routines
+	// To manage the appendRoutine go routines
 	bgAppend *backgroundAppend
 }
 
@@ -99,10 +104,13 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		return nil, err
 	}
 
-	err = fs.verifyAndAddFSPath("disk2")
+	err = fs.verifyAndAddFSPath("disk2") // TODO: Pass in list of dirs
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Println(fs)
+
 	// Initialize and load bucket policies.
 	err = initBucketPolicies(fs)
 	if err != nil {
@@ -176,7 +184,14 @@ func (fs *fsObjects) verifyAndAddFSPath(fsPath string) error {
 // Should be called when process shuts down.
 func (fs fsObjects) Shutdown() error {
 	// Cleanup and delete tmp uuid.
-	return fsRemoveAll(pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID))
+	var err error
+	for _, path := range fs.fsPath {
+		e := fsRemoveAll(pathJoin(path, minioMetaTmpBucket, fs.fsUUID))
+		if e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // StorageInfo - returns underlying storage statistics.
@@ -336,7 +351,7 @@ func listBucketsForPath(path string) ([]BucketInfo, error) {
 			continue
 		}
 		var fi os.FileInfo
-		fi, err = fsStatDir(pathJoin(fs.fsPath, entry))
+		fi, err = fsStatDir(pathJoin(path, entry))
 		if err != nil {
 			// If the directory does not exist, skip the entry.
 			if errorCause(err) == errVolumeNotFound {
@@ -365,24 +380,25 @@ func listBucketsForPath(path string) ([]BucketInfo, error) {
 // DeleteBucket - delete a bucket and all the metadata associated
 // with the bucket including pending multipart, object metadata.
 func (fs fsObjects) DeleteBucket(bucket string) error {
-	bucketDir, err := fs.getBucketDir(bucket)
+	bucketDirs, err := fs.getBucketDirs(bucket)
 	if err != nil {
 		return toObjectErr(err, bucket)
 	}
 
+	// TODO: Iterate over dirs
 	// Attempt to delete regular bucket.
-	if err = fsRemoveDir(bucketDir); err != nil {
+	if err = fsRemoveDir(bucketDirs[0]); err != nil {
 		return toObjectErr(err, bucket)
 	}
 
 	// Cleanup all the previously incomplete multiparts.
-	minioMetaMultipartBucketDir := pathJoin(fs.fsPath, minioMetaMultipartBucket, bucket)
+	minioMetaMultipartBucketDir := pathJoin(fs.fsPath[0], minioMetaMultipartBucket, bucket)
 	if err = fsRemoveAll(minioMetaMultipartBucketDir); err != nil {
 		return toObjectErr(err, bucket)
 	}
 
 	// Cleanup all the bucket metadata.
-	minioMetadataBucketDir := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket)
+	minioMetadataBucketDir := pathJoin(fs.fsPath[0], minioMetaBucket, bucketMetaPrefix, bucket)
 	if err = fsRemoveAll(minioMetadataBucketDir); err != nil {
 		return toObjectErr(err, bucket)
 	}
@@ -401,7 +417,7 @@ func (fs fsObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	}
 
 	// Stat the file to get file size.
-	fi, err := fsStatFile(pathJoin(fs.fsPath, srcBucket, srcObject))
+	fi, err := fsStatFile(pathJoin(fs.fsPath[0], srcBucket, srcObject))
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, srcBucket, srcObject)
 	}
@@ -409,7 +425,7 @@ func (fs fsObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	// Check if this request is only metadata update.
 	cpMetadataOnly := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
 	if cpMetadataOnly {
-		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, srcBucket, srcObject, fsMetaJSONFile)
+		fsMetaPath := pathJoin(fs.fsPath[0], minioMetaBucket, bucketMetaPrefix, srcBucket, srcObject, fsMetaJSONFile)
 		var wlk *lock.LockedFile
 		wlk, err = fs.rwPool.Write(fsMetaPath)
 		if err != nil {
@@ -787,7 +803,7 @@ func (fs fsObjects) DeleteObject(bucket, object string) error {
 		return toObjectErr(err, bucket)
 	}
 
-	minioMetaBucketDir := pathJoin(fs.fsPath, minioMetaBucket)
+	minioMetaBucketDir := pathJoin(fs.fsPath[0], minioMetaBucket)
 	fsMetaPath := pathJoin(minioMetaBucketDir, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
 	if bucket != minioMetaBucket {
 		rwlk, lerr := fs.rwPool.Write(fsMetaPath)
@@ -801,7 +817,7 @@ func (fs fsObjects) DeleteObject(bucket, object string) error {
 	}
 
 	// Delete the object.
-	if err := fsDeleteFile(pathJoin(fs.fsPath, bucket), pathJoin(fs.fsPath, bucket, object)); err != nil {
+	if err := fsDeleteFile(pathJoin(fs.fsPath[0], bucket), pathJoin(fs.fsPath[0], bucket, object)); err != nil {
 		return toObjectErr(err, bucket, object)
 	}
 
@@ -827,7 +843,16 @@ var fsTreeWalkIgnoredErrs = append(baseIgnoredErrs, []error{
 func (fs fsObjects) listDirFactory(isLeaf isLeafFunc) listDirFunc {
 	// listDir - lists all the entries at a given prefix and given entry in the prefix.
 	listDir := func(bucket, prefixDir, prefixEntry string) (entries []string, delayIsLeaf bool, err error) {
-		entries, err = readDir(pathJoin(fs.fsPath, bucket, prefixDir))
+
+		bucketDirs, err := fs.getBucketDirs(bucket)
+		if err != nil {
+			return nil, false, err
+		} else if len(bucketDirs) > 1 {
+			return nil, false, err
+		}
+
+		// TODO: Fix this
+		entries, err = readDir(pathJoin(bucketDirs[0], prefixDir))
 		if err != nil {
 			return nil, false, err
 		}
@@ -842,7 +867,11 @@ func (fs fsObjects) listDirFactory(isLeaf isLeafFunc) listDirFunc {
 // getObjectETag is a helper function, which returns only the md5sum
 // of the file on the disk.
 func (fs fsObjects) getObjectETag(bucket, entry string) (string, error) {
-	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, entry, fsMetaJSONFile)
+	fsPath, err := fs.getReadablePath(bucket, entry)
+	if err != nil {
+		return "", toObjectErr(err, bucket)
+	}
+	fsMetaPath := pathJoin(fsPath, minioMetaBucket, bucketMetaPrefix, bucket, entry, fsMetaJSONFile)
 
 	// Read `fs.json` to perhaps contend with
 	// parallel Put() operations.
@@ -929,9 +958,14 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 			return ObjectInfo{}, err
 		}
 
+		fsPath, err := fs.getReadablePath(bucket, entry)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+
 		// Stat the file to get file size.
 		var fi os.FileInfo
-		fi, err = fsStatFile(pathJoin(fs.fsPath, bucket, entry))
+		fi, err = fsStatFile(pathJoin(fsPath, bucket, entry))
 		if err != nil {
 			return ObjectInfo{}, toObjectErr(err, bucket, entry)
 		}
@@ -947,8 +981,7 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		}, nil
 	}
 
-	heal := false // true only for xl.ListObjectsHeal()
-	walkResultCh, endWalkCh := fs.listPool.Release(listParams{bucket, recursive, marker, prefix, heal})
+	walkResultCh, endWalkCh := fs.listPool.Release(listParams{bucket: bucket, recursive: recursive, marker: marker, prefix: prefix})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := func(bucket, object string) bool {
@@ -966,7 +999,7 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 	var nextMarker string
 
 	// List until maxKeys requested.
-	for i := 0; i < maxKeys; {
+	for i := 0; i < maxKeys; i++ {
 		walkResult, ok := <-walkResultCh
 		if !ok {
 			// Closed channel.
@@ -991,11 +1024,10 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 			eof = true
 			break
 		}
-		i++
 	}
 
 	// Save list routine for the next marker if we haven't reached EOF.
-	params := listParams{bucket, recursive, nextMarker, prefix, heal}
+	params := listParams{bucket: bucket, recursive: recursive,  marker: nextMarker,  prefix: prefix}
 	if !eof {
 		fs.listPool.Set(params, walkResultCh, endWalkCh)
 	}
