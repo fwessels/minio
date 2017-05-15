@@ -27,6 +27,77 @@ import (
 	"github.com/minio/minio/pkg/objcache"
 )
 
+// OVERVIEW
+//    - [X] Shutdown()
+//    - [X] StorageInfo()
+//
+// // Bucket operations.
+//    - [X] MakeBucket()
+//    - [X] GetBucketInfo()
+//    - [X] ListBuckets()
+//    - [X] DeleteBucket()
+//    - [X] ListObjects()
+//
+// // Object operations.
+//    - [X] GetObject()
+//    - [X] GetObjectInfo()
+//    - [X] PutObject()
+//    - [X] CopyObject()
+//    - [X] DeleteObject()
+//
+// // Multipart operations.
+//    - [ ] ListMultipartUploads()     (merge list across slots)
+//    - [X] NewMultipartUpload()
+//    - [X] CopyObjectPart()           (not tested)
+//    - [X] PutObjectPart()
+//    - [X] ListObjectParts()          (not tested)
+//    - [X] AbortMultipartUpload()     (not tested)
+//    - [X] CompleteMultipartUpload()
+//
+// // Healing operations.
+//    - [ ] HealBucket()
+//    - [ ] ListBucketsHeal()
+//    - [ ] HealObject()
+//    - [ ] ListObjectsHeal()
+//    - [ ] ListUploadsHeal()
+
+// TODO
+//
+// - Scale bucket
+//   - Criteria for adding a slot
+//   - Strategy for scheduling/spreading slots over disks
+//   - Adding a slot to a bucket
+//     - locking: prevent adding multiple slots at same time
+//
+// - Initialization
+//   - Properly initialize drives
+//   - Expand number of slots (add drives over time)
+//   - Command line interface
+//     - need any changes?
+//   - how to determine data/parity
+//     - determine automatically
+//     - give user control?
+//     - allow different config per slot?
+
+// SCRUTINIZE
+// - bucket policies
+// - event notifications
+// - anything other?
+
+// TESTING
+// - fix all existing unit testing
+// - add new unit tests etc.
+
+// PERFORMANCE
+// - impact of numer of slots per bucket
+//   - need to iterate over all buckets
+// - caching of buckets
+// - benchmarking
+// - etc.
+
+// XL vs Distributed
+// -
+
 // XL constants.
 const (
 	// Format config file carries backend format specific details.
