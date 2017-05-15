@@ -190,6 +190,7 @@ func newXLObjects(storageDisks []StorageAPI) (ObjectLayer, error) {
 
 // Shutdown function for object storage interface.
 func (xl xlObjects) Shutdown() error {
+	fmt.Println("SHUTDOWN")
 	// Add any object layer shutdown activities here.
 	for _, bucketSlot := range xl.bucketSlots {
 		for _, disk := range bucketSlot.storageDisks {

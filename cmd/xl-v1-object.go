@@ -30,6 +30,7 @@ import (
 	"github.com/minio/minio/pkg/mimedb"
 	"github.com/minio/minio/pkg/objcache"
 	"github.com/minio/sha256-simd"
+	"fmt"
 )
 
 // list all errors which can be ignored in object operations.
@@ -60,6 +61,7 @@ func (xl xlObjects) prepareFile(bucketSlot *BucketSlot, bucket, object string, s
 // if source object and destination object are same we only
 // update metadata.
 func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string, metadata map[string]string) (ObjectInfo, error) {
+	fmt.Println("COPYOBJECT")
 	bucketSlot, err := xl.getReadableSlot(srcBucket, srcObject)
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, srcBucket, srcObject)
@@ -155,6 +157,7 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 // startOffset indicates the starting read location of the object.
 // length indicates the total length of the object.
 func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length int64, writer io.Writer) error {
+	fmt.Println("GETOBJECT", object)
 	if err := checkGetObjArgs(bucket, object); err != nil {
 		return err
 	}
@@ -169,10 +172,18 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 		return traceError(errUnexpected)
 	}
 
-	bucketSlot, err := xl.getReadableSlot(bucket, object)
-	if err != nil {
-		return err
+	var bucketSlot BucketSlot
+	var err error
+	// TODO: Remove hack for policy.json & notification.xml
+	if strings.HasSuffix(object, "policy.json") || strings.HasSuffix(object, "notification.xml") {
+		bucketSlot = xl.bucketSlots[0]
+	} else {
+		bucketSlot, err = xl.getReadableSlot(bucket, object)
+		if err != nil {
+			return err
+		}
 	}
+
 	// Read metadata associated with the object from all disks.
 	metaArr, errs := readAllXLMetadata(bucketSlot.storageDisks, bucket, object)
 	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, bucketSlot.readQuorum); reducedErr != nil {
@@ -328,6 +339,7 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 
 // GetObjectInfo - reads object metadata and replies back ObjectInfo.
 func (xl xlObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
+	fmt.Println("GETOBJECTINFO")
 	// This is a special case with object whose name ends with
 	// a slash separator, we always return object not found here.
 	if hasSuffix(object, slashSeparator) {
@@ -472,6 +484,7 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 	// This is a special case with size as '0' and object ends with
 	// a slash separator, we treat it like a valid operation and
 	// return success.
+	fmt.Println("PUTOBJECT")
 	if isObjectDir(object, size) {
 		// Check if an object is present as one of the parent dir.
 		// -- FIXME. (needs a new kind of lock).
@@ -488,7 +501,7 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 
 	// Check if an object is present as one of the parent dir.
 	// -- FIXME. (needs a new kind of lock).
-	if xl.parentDirIsObject(bucket, path.Dir(object)) {
+	if false && xl.parentDirIsObject(bucket, path.Dir(object)) {
 		return ObjectInfo{}, toObjectErr(traceError(errFileAccessDenied), bucket, object)
 	}
 
@@ -798,6 +811,7 @@ func (xl xlObjects) deleteObject(bucket, object string) error {
 // any error as it is not necessary for the handler to reply back a
 // response to the client request.
 func (xl xlObjects) DeleteObject(bucket, object string) (err error) {
+	fmt.Println("DELETEOBJECT")
 	if err = checkDelObjArgs(bucket, object); err != nil {
 		return err
 	}

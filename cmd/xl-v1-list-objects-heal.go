@@ -255,15 +255,19 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 		Delimiter:   delimiter,
 	}
 
+	bucketSlot, err := xl.getReadableSlot(bucket, prefix)
+	if err != nil {
+		return ListMultipartsInfo{}, err
+	}
+
 	recursive := delimiter != slashSeparator
 
 	var uploads []uploadMetadata
-	var err error
 	// List all upload ids for the given keyMarker, starting from
 	// uploadIDMarker.
 	if uploadIDMarker != "" {
 		uploads, _, err = fetchMultipartUploadIDs(bucket, keyMarker,
-			uploadIDMarker, maxUploads, xl.getLoadBalancedDisks())
+			uploadIDMarker, maxUploads, bucketSlot.getLoadBalancedDisks())
 		if err != nil {
 			return ListMultipartsInfo{}, err
 		}
@@ -307,7 +311,7 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 			walkerDoneCh = make(chan struct{})
 			isLeaf := xl.isMultipartUpload
 			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs,
-				xl.getLoadBalancedDisks()...)
+				bucketSlot.getLoadBalancedDisks()...)
 			walkerCh = startTreeWalk(minioMetaMultipartBucket,
 				multipartPrefixPath, multipartMarkerPath,
 				recursive, listDir, isLeaf, walkerDoneCh)
@@ -344,7 +348,7 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 			var end bool
 			uploadIDMarker = ""
 			newUploads, end, err = fetchMultipartUploadIDs(bucket, entry, uploadIDMarker,
-				uploadsLeft, xl.getLoadBalancedDisks())
+				uploadsLeft, bucketSlot.getLoadBalancedDisks())
 			if err != nil {
 				return ListMultipartsInfo{}, err
 			}
@@ -360,8 +364,6 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 		}
 
 	}
-
-	bucketSlot := xl.bucketSlots[0]
 
 	// For all received uploads fill in the multiparts result.
 	for _, upload := range uploads {

@@ -163,20 +163,30 @@ func (xl xlObjects) removeUploadID(bucketSlot BucketSlot, bucket, object string,
 
 // Returns if the prefix is a multipart upload.
 func (xl xlObjects) isMultipartUpload(bucket, prefix string) bool {
-	for _, disk := range xl.getLoadBalancedDisks() {
-		if disk == nil {
-			continue
-		}
-		_, err := disk.StatFile(bucket, pathJoin(prefix, uploadsJSONFile))
-		if err == nil {
-			return true
-		}
-		// For any reason disk was deleted or goes offline, continue
-		if isErrIgnored(err, objMetadataOpIgnoredErrs...) {
-			continue
-		}
-		break
+
+	// TODO: Called from listMultipartUploads -- should pass in bucketSlot
+
+	bucketSlots, err := xl.getSlotsForBucket(bucket)
+	if err != nil {
+		return false
 	}
+	for _, bucketSlot := range bucketSlots {
+		for _, disk := range bucketSlot.getLoadBalancedDisks() {
+			if disk == nil {
+				continue
+			}
+			_, err := disk.StatFile(bucket, pathJoin(prefix, uploadsJSONFile))
+			if err == nil {
+				return true
+			}
+			// For any reason disk was deleted or goes offline, continue
+			if isErrIgnored(err, objMetadataOpIgnoredErrs...) {
+				continue
+			}
+			break
+		}
+	}
+
 	return false
 }
 
@@ -286,9 +296,18 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		Delimiter:   delimiter,
 	}
 
+	// Early abort for now
+	result.IsTruncated = false
+	return result, nil
+
 	recursive := true
 	if delimiter == slashSeparator {
 		recursive = false
+	}
+
+	bucketSlot, err := xl.getReadableSlot(bucket, prefix)
+	if err != nil {
+		return ListMultipartsInfo{}, err
 	}
 
 	// Not using path.Join() as it strips off the trailing '/'.
@@ -448,9 +467,12 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 // ListMultipartsInfo structure is unmarshalled directly into XML and
 // replied back to the client.
 func (xl xlObjects) ListMultipartUploads(bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (ListMultipartsInfo, error) {
+	fmt.Println("LISTMULTIPARTUPLOADS")
 	if err := checkListMultipartArgs(bucket, prefix, keyMarker, uploadIDMarker, delimiter, xl); err != nil {
 		return ListMultipartsInfo{}, err
 	}
+
+	// TODO: Merge the list over all slots of this bucket
 
 	return xl.listMultipartUploads(bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
 }
@@ -524,6 +546,7 @@ func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[st
 //
 // Implements S3 compatible initiate multipart API.
 func (xl xlObjects) NewMultipartUpload(bucket, object string, meta map[string]string) (string, error) {
+	fmt.Println("NEWMULTIPARTUPLOAD")
 	if err := checkNewMultipartArgs(bucket, object, xl); err != nil {
 		return "", err
 	}
@@ -573,6 +596,7 @@ func (xl xlObjects) CopyObjectPart(srcBucket, srcObject, dstBucket, dstObject, u
 //
 // Implements S3 compatible Upload Part API.
 func (xl xlObjects) PutObjectPart(bucket, object, uploadID string, partID int, size int64, data io.Reader, md5Hex string, sha256sum string) (PartInfo, error) {
+	fmt.Println("PUTOBJECTPART")
 	if err := checkPutObjectPartArgs(bucket, object, xl); err != nil {
 		return PartInfo{}, err
 	}
@@ -843,6 +867,7 @@ func (xl xlObjects) listObjectParts(bucketSlot BucketSlot, bucket, object, uploa
 // ListPartsInfo structure is unmarshalled directly into XML and
 // replied back to the client.
 func (xl xlObjects) ListObjectParts(bucket, object, uploadID string, partNumberMarker, maxParts int) (ListPartsInfo, error) {
+	fmt.Println("LISTOBJECTPARTS")
 	if err := checkListPartsArgs(bucket, object, xl); err != nil {
 		return ListPartsInfo{}, err
 	}

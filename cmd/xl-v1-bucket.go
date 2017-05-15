@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync"
 	"math/rand"
+	"fmt"
 )
 
 // list all errors that can be ignore in a bucket operation.
@@ -32,6 +33,7 @@ var bucketMetadataOpIgnoredErrs = append(bucketOpIgnoredErrs, errVolumeNotFound)
 
 // MakeBucket - make a bucket.
 func (xl xlObjects) MakeBucket(bucket string) error {
+	fmt.Println("MAKEBUCKET")
 	// Verify if bucket is valid.
 	if !IsValidBucketName(bucket) {
 		return traceError(BucketNameInvalid{Bucket: bucket})
@@ -174,6 +176,7 @@ func getBucketInfoForSlot(bucketSlot *BucketSlot, bucketName string) (bucketInfo
 
 // GetBucketInfo - returns BucketInfo for a bucket.
 func (xl xlObjects) GetBucketInfo(bucket string) (BucketInfo, error) {
+	fmt.Println("GETBUCKETINFO")
 	// Verify if bucket is valid.
 	if !IsValidBucketName(bucket) {
 		return BucketInfo{}, BucketNameInvalid{Bucket: bucket}
@@ -265,6 +268,7 @@ func listBucketsPerSlot(disks []StorageAPI) (bucketsInfo []BucketInfo, err error
 
 // ListBuckets - lists all the buckets, sorted by its name.
 func (xl xlObjects) ListBuckets() ([]BucketInfo, error) {
+	fmt.Println("LISTBUCKETS")
 	bucketInfos, err := xl.listBuckets()
 	if err != nil {
 		return nil, toObjectErr(err)
@@ -276,6 +280,7 @@ func (xl xlObjects) ListBuckets() ([]BucketInfo, error) {
 
 // DeleteBucket - deletes a bucket.
 func (xl xlObjects) DeleteBucket(bucket string) error {
+	fmt.Println("DELETEBUCKET")
 	// Verify if bucket is valid.
 	if !IsValidBucketName(bucket) {
 		return BucketNameInvalid{Bucket: bucket}

@@ -790,6 +790,7 @@ func checkFormatXLValues(formatConfigs []*formatConfigV1) (int, error) {
 		if err := checkFormatXLValue(formatXL); err != nil {
 			return i, err
 		}
+		// Disabled for now -- called during initialization as well creation of XLObjects
 		if false && len(formatConfigs) != len(formatXL.XL.JBOD) {
 			return i, fmt.Errorf("Number of disks %d did not match the backend format %d",
 				len(formatConfigs), len(formatXL.XL.JBOD))

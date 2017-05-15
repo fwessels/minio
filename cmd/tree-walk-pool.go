@@ -78,7 +78,7 @@ func newTreeWalkPool(timeout time.Duration) *treeWalkPool {
 func (t treeWalkPool) Release(params listParams) (resultCh chan treeWalkResult, endWalkCh chan struct{}) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
-	walks, ok := t.pool[params] // Pick the valid walks.
+	walks, ok := t.pool[params] // Check for the valid array of walks.
 	if ok {
 		if len(walks) > 0 {
 			// Pop out the first valid walk entry.

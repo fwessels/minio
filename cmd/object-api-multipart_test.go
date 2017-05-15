@@ -126,7 +126,7 @@ func testObjectAbortMultipartUpload(obj ObjectLayer, instanceType string, t Test
 	}
 }
 
-// Wrapper for calling isUploadIDExists tests for both XL multiple disks and single node setup.
+// Wrapper for calling doesUploadIDExist tests for both XL multiple disks and single node setup.
 func TestObjectAPIIsUploadIDExists(t *testing.T) {
 	ExecObjectLayerTest(t, testObjectAPIIsUploadIDExists)
 }

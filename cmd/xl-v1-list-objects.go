@@ -127,6 +127,7 @@ func (xl xlObjects) listObjects(bucketSlot BucketSlot, bucket, prefix, marker, d
 
 // ListObjects - list all objects at prefix, delimited by '/'.
 func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKeys int) (ListObjectsInfo, error) {
+	fmt.Println("LISTOBJECTS")
 	if err := checkListObjsArgs(bucket, prefix, marker, delimiter, xl); err != nil {
 		return ListObjectsInfo{}, err
 	}
@@ -169,13 +170,12 @@ func (xl xlObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		}
 
 		copy(indices, *_indices)
+		fmt.Println("Re-entering", indices)
 
 		// Initialize map from previous invocation
 		for bucketIndex, _ := range bucketSlots {
 			mapListObjInfo[bucketIndex] = (*_mapListObjInfo)[bucketIndex]
 		}
-
-		fmt.Println("Re-entering", indices)
 	} else {
 		// For first invocation create dummy objects to trigger invoking listing below
 		for bucketIndex, _ := range bucketSlots {
