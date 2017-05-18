@@ -82,7 +82,7 @@ func (m *ServerMux) handleServiceSignals() error {
 
 	// Wait for SIGTERM in a go-routine.
 	trapCh := signalTrap(os.Interrupt, syscall.SIGTERM)
-	go func(<-chan bool) {
+	go func(trapCh <-chan bool) {
 		<-trapCh
 		globalServiceSignalCh <- serviceStop
 	}(trapCh)
@@ -102,6 +102,7 @@ func (m *ServerMux) handleServiceSignals() error {
 			}
 			runExitFn(nil)
 		case serviceStop:
+			log.Println("Gracefully stopping... (press Ctrl+C again to force)")
 			if err := m.Close(); err != nil {
 				errorIf(err, "Unable to close server gracefully")
 			}

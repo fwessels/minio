@@ -22,7 +22,7 @@ import "errors"
 var errUnexpected = errors.New("Unexpected error, please report this issue at https://github.com/minio/minio/issues")
 
 // errCorruptedFormat - corrupted backend format.
-var errCorruptedFormat = errors.New("corrupted backend format")
+var errCorruptedFormat = errors.New("corrupted backend format, please join https://slack.minio.io for assistance")
 
 // errUnformattedDisk - unformatted disk found.
 var errUnformattedDisk = errors.New("unformatted disk found")
@@ -47,6 +47,9 @@ var errFileNotFound = errors.New("file not found")
 
 // errFileNameTooLong - given file name is too long than supported length.
 var errFileNameTooLong = errors.New("file name too long")
+
+// errFileComponentInvalid - given file name has invalid components.
+var errFileComponentInvalid = errors.New("file name has invalid components")
 
 // errVolumeExists - cannot create same volume again.
 var errVolumeExists = errors.New("volume already exists")

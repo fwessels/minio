@@ -17,11 +17,12 @@
 package cmd
 
 import (
-	"bytes"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 
@@ -64,6 +65,12 @@ func (api gatewayAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Re
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
+	case authTypeAnonymous:
+		// No verification needed for anonymous requests.
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
 	}
 
 	getObjectInfo := objectAPI.GetObjectInfo
@@ -152,6 +159,133 @@ func (api gatewayAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// PutObjectHandler - PUT Object
+// ----------
+// This implementation of the PUT operation adds an object to a bucket.
+func (api gatewayAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
+	objectAPI := api.ObjectAPI()
+	if objectAPI == nil {
+		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
+		return
+	}
+
+	// X-Amz-Copy-Source shouldn't be set for this call.
+	if _, ok := r.Header["X-Amz-Copy-Source"]; ok {
+		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		return
+	}
+
+	var object, bucket string
+	vars := router.Vars(r)
+	bucket = vars["bucket"]
+	object = vars["object"]
+
+	// Get Content-Md5 sent by client and verify if valid
+	md5Bytes, err := checkValidMD5(r.Header.Get("Content-Md5"))
+	if err != nil {
+		errorIf(err, "Unable to validate content-md5 format.")
+		writeErrorResponse(w, ErrInvalidDigest, r.URL)
+		return
+	}
+
+	/// if Content-Length is unknown/missing, deny the request
+	size := r.ContentLength
+	reqAuthType := getRequestAuthType(r)
+	if reqAuthType == authTypeStreamingSigned {
+		sizeStr := r.Header.Get("x-amz-decoded-content-length")
+		size, err = strconv.ParseInt(sizeStr, 10, 64)
+		if err != nil {
+			errorIf(err, "Unable to parse `x-amz-decoded-content-length` into its integer value", sizeStr)
+			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
+		}
+	}
+	if size == -1 {
+		writeErrorResponse(w, ErrMissingContentLength, r.URL)
+		return
+	}
+
+	/// maximum Upload size for objects in a single operation
+	if isMaxObjectSize(size) {
+		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
+		return
+	}
+
+	// Extract metadata to be saved from incoming HTTP header.
+	metadata := extractMetadataFromHeader(r.Header)
+	if reqAuthType == authTypeStreamingSigned {
+		if contentEncoding, ok := metadata["content-encoding"]; ok {
+			contentEncoding = trimAwsChunkedContentEncoding(contentEncoding)
+			if contentEncoding != "" {
+				// Make sure to trim and save the content-encoding
+				// parameter for a streaming signature which is set
+				// to a custom value for example: "aws-chunked,gzip".
+				metadata["content-encoding"] = contentEncoding
+			} else {
+				// Trimmed content encoding is empty when the header
+				// value is set to "aws-chunked" only.
+
+				// Make sure to delete the content-encoding parameter
+				// for a streaming signature which is set to value
+				// for example: "aws-chunked"
+				delete(metadata, "content-encoding")
+			}
+		}
+	}
+
+	// Make sure we hex encode md5sum here.
+	metadata["etag"] = hex.EncodeToString(md5Bytes)
+
+	sha256sum := ""
+
+	// Lock the object.
+	objectLock := globalNSMutex.NewNSLock(bucket, object)
+	objectLock.Lock()
+	defer objectLock.Unlock()
+
+	var objInfo ObjectInfo
+	switch reqAuthType {
+	case authTypeAnonymous:
+		// Create anonymous object.
+		objInfo, err = objectAPI.AnonPutObject(bucket, object, size, r.Body, metadata, sha256sum)
+	case authTypeStreamingSigned:
+		// Initialize stream signature verifier.
+		reader, s3Error := newSignV4ChunkedReader(r)
+		if s3Error != ErrNone {
+			errorIf(errSignatureMismatch, dumpRequest(r))
+			writeErrorResponse(w, s3Error, r.URL)
+			return
+		}
+		objInfo, err = objectAPI.PutObject(bucket, object, size, reader, metadata, sha256sum)
+	case authTypeSignedV2, authTypePresignedV2:
+		s3Error := isReqAuthenticatedV2(r)
+		if s3Error != ErrNone {
+			errorIf(errSignatureMismatch, dumpRequest(r))
+			writeErrorResponse(w, s3Error, r.URL)
+			return
+		}
+		objInfo, err = objectAPI.PutObject(bucket, object, size, r.Body, metadata, sha256sum)
+	case authTypePresigned, authTypeSigned:
+		if s3Error := reqSignatureV4Verify(r, serverConfig.GetRegion()); s3Error != ErrNone {
+			errorIf(errSignatureMismatch, dumpRequest(r))
+			writeErrorResponse(w, s3Error, r.URL)
+			return
+		}
+		if !skipContentSha256Cksum(r) {
+			sha256sum = r.Header.Get("X-Amz-Content-Sha256")
+		}
+		// Create object.
+		objInfo, err = objectAPI.PutObject(bucket, object, size, r.Body, metadata, sha256sum)
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
+	}
+
+	w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+	writeSuccessResponseHeadersOnly(w)
+}
+
 // HeadObjectHandler - HEAD Object
 // -----------
 // The HEAD operation retrieves metadata from an object without returning the object itself.
@@ -185,6 +319,12 @@ func (api gatewayAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.R
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
+	case authTypeAnonymous:
+		// No verification needed for anonymous requests.
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
 	}
 
 	getObjectInfo := objectAPI.GetObjectInfo
@@ -354,37 +494,13 @@ func (api gatewayAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	{
-		// FIXME: consolidate bucketPolicy and policy.BucketAccessPolicy so that
-		// the verification below is done on the same type.
-		// Parse bucket policy.
-		policyInfo := &bucketPolicy{}
-		err = parseBucketPolicy(bytes.NewReader(policyBytes), policyInfo)
-		if err != nil {
-			errorIf(err, "Unable to parse bucket policy.")
-			writeErrorResponse(w, ErrInvalidPolicyDocument, r.URL)
-			return
-		}
-
-		// Parse check bucket policy.
-		if s3Error := checkBucketPolicyResources(bucket, policyInfo); s3Error != ErrNone {
-			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-			return
-		}
-	}
-	policyInfo := &policy.BucketAccessPolicy{}
-	if err = json.Unmarshal(policyBytes, policyInfo); err != nil {
+	policyInfo := policy.BucketAccessPolicy{}
+	if err = json.Unmarshal(policyBytes, &policyInfo); err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-	var policies []BucketAccessPolicy
-	for prefix, policy := range policy.GetPolicies(policyInfo.Statements, bucket) {
-		policies = append(policies, BucketAccessPolicy{
-			Prefix: prefix,
-			Policy: policy,
-		})
-	}
-	if err = objAPI.SetBucketPolicies(bucket, policies); err != nil {
+
+	if err = objAPI.SetBucketPolicies(bucket, policyInfo); err != nil {
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -453,17 +569,14 @@ func (api gatewayAPIHandlers) GetBucketPolicyHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	policies, err := objAPI.GetBucketPolicies(bucket)
+	bp, err := objAPI.GetBucketPolicies(bucket)
 	if err != nil {
 		errorIf(err, "Unable to read bucket policy.")
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
-	policyInfo := policy.BucketAccessPolicy{Version: "2012-10-17"}
-	for _, p := range policies {
-		policyInfo.Statements = policy.SetPolicy(policyInfo.Statements, p.Policy, bucket, p.Prefix)
-	}
-	policyBytes, err := json.Marshal(&policyInfo)
+
+	policyBytes, err := json.Marshal(bp)
 	if err != nil {
 		errorIf(err, "Unable to read bucket policy.")
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
@@ -497,6 +610,65 @@ func (api gatewayAPIHandlers) PutBucketNotificationHandler(w http.ResponseWriter
 // ListenBucketNotificationHandler - list bucket notifications.
 func (api gatewayAPIHandlers) ListenBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	writeErrorResponse(w, ErrNotImplemented, r.URL)
+}
+
+// PutBucketHandler - PUT Bucket
+// ----------
+// This implementation of the PUT operation creates a new bucket for authenticated request
+func (api gatewayAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
+	objectAPI := api.ObjectAPI()
+	if objectAPI == nil {
+		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
+		return
+	}
+
+	// PutBucket does not have any bucket action.
+	s3Error := checkRequestAuthType(r, "", "", globalMinioDefaultRegion)
+	if s3Error == ErrInvalidRegion {
+		// Clients like boto3 send putBucket() call signed with region that is configured.
+		s3Error = checkRequestAuthType(r, "", "", serverConfig.GetRegion())
+	}
+	if s3Error != ErrNone {
+		writeErrorResponse(w, s3Error, r.URL)
+		return
+	}
+
+	vars := router.Vars(r)
+	bucket := vars["bucket"]
+
+	// Validate if incoming location constraint is valid, reject
+	// requests which do not follow valid region requirements.
+	location, s3Error := parseLocationConstraint(r)
+	if s3Error != ErrNone {
+		writeErrorResponse(w, s3Error, r.URL)
+		return
+	}
+
+	// validating region here, because isValidLocationConstraint
+	// reads body which has been read already. So only validating
+	// region here.
+	serverRegion := serverConfig.GetRegion()
+	if serverRegion != location {
+		writeErrorResponse(w, ErrInvalidRegion, r.URL)
+		return
+	}
+
+	bucketLock := globalNSMutex.NewNSLock(bucket, "")
+	bucketLock.Lock()
+	defer bucketLock.Unlock()
+
+	// Proceed to creating a bucket.
+	err := objectAPI.MakeBucketWithLocation(bucket, location)
+	if err != nil {
+		errorIf(err, "Unable to create a bucket.")
+		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+		return
+	}
+
+	// Make sure to add Location information here only for bucket
+	w.Header().Set("Location", getLocation(r))
+
+	writeSuccessResponseHeadersOnly(w)
 }
 
 // DeleteBucketHandler - Delete bucket
@@ -561,6 +733,12 @@ func (api gatewayAPIHandlers) ListObjectsV1Handler(w http.ResponseWriter, r *htt
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
+	case authTypeAnonymous:
+		// No verification needed for anonymous requests.
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
 	}
 
 	// Extract all the litsObjectsV1 query params to their native values.
@@ -625,6 +803,12 @@ func (api gatewayAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.R
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
+	case authTypeAnonymous:
+		// No verification needed for anonymous requests.
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
 	}
 
 	getBucketInfo := objectAPI.GetBucketInfo
@@ -675,6 +859,12 @@ func (api gatewayAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r 
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
+	case authTypeAnonymous:
+		// No verification needed for anonymous requests.
+	default:
+		// For all unknown auth types return error.
+		writeErrorResponse(w, ErrAccessDenied, r.URL)
+		return
 	}
 
 	getBucketInfo := objectAPI.GetBucketInfo

@@ -24,6 +24,8 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/signal"
+	"path"
 	"path/filepath"
 	"sort"
 	"syscall"
@@ -72,20 +74,122 @@ func initMetaVolumeFS(fsPath, fsUUID string) error {
 
 }
 
+// Migrate FS object is a place holder code for all
+// FS format migrations.
+func migrateFSObject(fsPath, fsUUID string) (err error) {
+	// Writing message here is important for servers being upgraded.
+	log.Println("Please do not stop the server.")
+
+	ch := make(chan os.Signal)
+	defer signal.Stop(ch)
+	defer close(ch)
+
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for {
+			_, ok := <-ch
+			if !ok {
+				break
+			}
+			log.Println("Please wait server is being upgraded..")
+		}
+	}()
+
+	return migrateFSFormatV1ToV2(fsPath, fsUUID)
+}
+
+// List all buckets at meta bucket prefix in `.minio.sys/buckets/` path.
+// This is implemented to avoid a bug on windows with using readDir().
+func fsReaddirMetaBuckets(fsPath string) ([]string, error) {
+	f, err := os.Open(preparePath(pathJoin(fsPath, minioMetaBucket, bucketConfigPrefix)))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errFileNotFound
+		} else if os.IsPermission(err) {
+			return nil, errFileAccessDenied
+		}
+		return nil, err
+	}
+	return f.Readdirnames(-1)
+}
+
+var bucketMetadataConfigs = []string{
+	bucketNotificationConfig,
+	bucketListenerConfig,
+	bucketPolicyConfig,
+}
+
+// Attempts to migrate old object metadata files to newer format
+//
+// i.e
+//    -------------------------------------------------------
+//    .minio.sys/buckets/<bucket_name>/<object_path>/fs.json - V1
+//    -------------------------------------------------------
+//    .minio.sys/buckets/<bucket_name>/objects/<object_path>/fs.json - V2
+//    -------------------------------------------------------
+//
+func migrateFSFormatV1ToV2(fsPath, fsUUID string) (err error) {
+	metaBucket := pathJoin(fsPath, minioMetaBucket, bucketConfigPrefix)
+
+	var buckets []string
+	buckets, err = fsReaddirMetaBuckets(fsPath)
+	if err != nil && err != errFileNotFound {
+		return err
+	}
+
+	// Migrate all buckets present.
+	for _, bucket := range buckets {
+		// Temporary bucket of form .UUID-bucket.
+		tmpBucket := fmt.Sprintf(".%s-%s", fsUUID, bucket)
+
+		// Rename existing bucket as `.UUID-bucket`.
+		if err = fsRenameFile(pathJoin(metaBucket, bucket), pathJoin(metaBucket, tmpBucket)); err != nil {
+			return err
+		}
+
+		// Create a new bucket name with name as `bucket`.
+		if err = fsMkdir(pathJoin(metaBucket, bucket)); err != nil {
+			return err
+		}
+
+		///  Rename all bucket metadata files to newly created `bucket`.
+		for _, bucketMetaFile := range bucketMetadataConfigs {
+			if err = fsRenameFile(pathJoin(metaBucket, tmpBucket, bucketMetaFile),
+				pathJoin(metaBucket, bucket, bucketMetaFile)); err != nil {
+				if errorCause(err) != errFileNotFound {
+					return err
+				}
+			}
+		}
+
+		// Finally rename the temporary bucket to `bucket/objects` directory.
+		if err = fsRenameFile(pathJoin(metaBucket, tmpBucket),
+			pathJoin(metaBucket, bucket, objectMetaPrefix)); err != nil {
+			if errorCause(err) != errFileNotFound {
+				return err
+			}
+		}
+	}
+
+	log.Printf("Migrating bucket metadata format from \"%s\" to newer format \"%s\"... completed successfully.", fsFormatV1, fsFormatV2)
+
+	// If all goes well we return success.
+	return nil
+}
+
 // newFSObjectLayer - initialize new fs object layer.
 func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 	if fsPath == "" {
 		return nil, errInvalidArgument
 	}
 
-	var err error
 	// Disallow relative paths, figure out absolute paths.
-	fsPath, err = filepath.Abs(fsPath)
+	fsPath, err := filepath.Abs(fsPath)
 	if err != nil {
 		return nil, err
 	}
 
-	fi, err := os.Stat(preparePath(fsPath))
+	fi, err := osStat(preparePath(fsPath))
 	if err == nil {
 		if !fi.IsDir() {
 			return nil, syscall.ENOTDIR
@@ -108,26 +212,6 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		return nil, fmt.Errorf("Unable to initialize '.minio.sys' meta volume, %s", err)
 	}
 
-	// Load `format.json`.
-	format, err := loadFormatFS(fsPath)
-	if err != nil && err != errUnformattedDisk {
-		return nil, fmt.Errorf("Unable to load 'format.json', %s", err)
-	}
-
-	// If the `format.json` doesn't exist create one.
-	if err == errUnformattedDisk {
-		fsFormatPath := pathJoin(fsPath, minioMetaBucket, fsFormatJSONFile)
-		// Initialize format.json, if already exists overwrite it.
-		if serr := saveFormatFS(fsFormatPath, newFSFormatV1()); serr != nil {
-			return nil, fmt.Errorf("Unable to initialize 'format.json', %s", serr)
-		}
-	}
-
-	// Validate if we have the same format.
-	if err == nil && format.Format != "fs" {
-		return nil, fmt.Errorf("Unable to recognize backend format, Disk is not in FS format. %s", format.Format)
-	}
-
 	// Initialize fs objects.
 	fs := &fsObjects{
 		fsPath: fsPath,
@@ -139,6 +223,17 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 		bgAppend: &backgroundAppend{
 			infoMap: make(map[string]bgAppendPartsInfo),
 		},
+	}
+
+	// Initialize `format.json`.
+	if err = initFormatFS(fsPath, fsUUID); err != nil {
+		return nil, err
+	}
+
+	// Once initialized hold read lock for the entire operation
+	// of filesystem backend.
+	if _, err = fs.rwPool.Open(pathJoin(fsPath, minioMetaBucket, fsFormatJSONFile)); err != nil {
+		return nil, err
 	}
 
 	// Initialize and load bucket policies.
@@ -159,6 +254,9 @@ func newFSObjectLayer(fsPath string) (ObjectLayer, error) {
 
 // Should be called when process shuts down.
 func (fs fsObjects) Shutdown() error {
+	// Close the format.json read lock.
+	fs.rwPool.Close(pathJoin(fs.fsPath, minioMetaBucket, fsFormatJSONFile))
+
 	// Cleanup and delete tmp uuid.
 	return fsRemoveAll(pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID))
 }
@@ -224,7 +322,7 @@ func (fs fsObjects) GetBucketInfo(bucket string) (BucketInfo, error) {
 		return BucketInfo{}, toObjectErr(err, bucket)
 	}
 
-	// As os.Stat() doesn't carry other than ModTime(), use ModTime() as CreatedTime.
+	// As osStat() doesn't carry other than ModTime(), use ModTime() as CreatedTime.
 	createdTime := st.ModTime()
 	return BucketInfo{
 		Name:    bucket,
@@ -238,7 +336,7 @@ func (fs fsObjects) ListBuckets() ([]BucketInfo, error) {
 		return nil, traceError(err)
 	}
 	var bucketInfos []BucketInfo
-	entries, err := readDir(preparePath(fs.fsPath))
+	entries, err := readDir(fs.fsPath)
 	if err != nil {
 		return nil, toObjectErr(traceError(errDiskNotFound))
 	}
@@ -263,7 +361,7 @@ func (fs fsObjects) ListBuckets() ([]BucketInfo, error) {
 
 		bucketInfos = append(bucketInfos, BucketInfo{
 			Name: fi.Name(),
-			// As os.Stat() doesnt carry CreatedTime, use ModTime() as CreatedTime.
+			// As osStat() doesnt carry CreatedTime, use ModTime() as CreatedTime.
 			Created: fi.ModTime(),
 		})
 	}
@@ -322,7 +420,7 @@ func (fs fsObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	// Check if this request is only metadata update.
 	cpMetadataOnly := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
 	if cpMetadataOnly {
-		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, srcBucket, srcObject, fsMetaJSONFile)
+		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, srcBucket, objectMetaPrefix, srcObject, fsMetaJSONFile)
 		var wlk *lock.LockedFile
 		wlk, err = fs.rwPool.Write(fsMetaPath)
 		if err != nil {
@@ -395,7 +493,7 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 	}
 
 	if bucket != minioMetaBucket {
-		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
+		fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, objectMetaPrefix, object, fsMetaJSONFile)
 		_, err = fs.rwPool.Open(fsMetaPath)
 		if err != nil && err != errFileNotFound {
 			return toObjectErr(traceError(err), bucket, object)
@@ -437,7 +535,7 @@ func (fs fsObjects) GetObject(bucket, object string, offset int64, length int64,
 // getObjectInfo - wrapper for reading object metadata and constructs ObjectInfo.
 func (fs fsObjects) getObjectInfo(bucket, object string) (ObjectInfo, error) {
 	fsMeta := fsMetaV1{}
-	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
+	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, objectMetaPrefix, object, fsMetaJSONFile)
 
 	// Read `fs.json` to perhaps contend with
 	// parallel Put() operations.
@@ -471,12 +569,6 @@ func (fs fsObjects) getObjectInfo(bucket, object string) (ObjectInfo, error) {
 
 // GetObjectInfo - reads object metadata and replies back ObjectInfo.
 func (fs fsObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
-	// This is a special case with object whose name ends with
-	// a slash separator, we always return object not found here.
-	if hasSuffix(object, slashSeparator) {
-		return ObjectInfo{}, toObjectErr(traceError(errFileNotFound), bucket, object)
-	}
-
 	if err := checkGetObjArgs(bucket, object); err != nil {
 		return ObjectInfo{}, err
 	}
@@ -488,21 +580,49 @@ func (fs fsObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
 	return fs.getObjectInfo(bucket, object)
 }
 
+// This function does the following check, suppose
+// object is "a/b/c/d", stat makes sure that objects ""a/b/c""
+// "a/b" and "a" do not exist.
+func (fs fsObjects) parentDirIsObject(bucket, parent string) bool {
+	var isParentDirObject func(string) bool
+	isParentDirObject = func(p string) bool {
+		if p == "." {
+			return false
+		}
+		if _, err := fsStatFile(pathJoin(fs.fsPath, bucket, p)); err == nil {
+			// If there is already a file at prefix "p" return error.
+			return true
+		}
+		// Check if there is a file as one of the parent paths.
+		return isParentDirObject(path.Dir(p))
+	}
+	return isParentDirObject(parent)
+}
+
 // PutObject - creates an object upon reading from the input stream
 // until EOF, writes data directly to configured filesystem path.
 // Additionally writes `fs.json` which carries the necessary metadata
 // for future object operations.
 func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.Reader, metadata map[string]string, sha256sum string) (objInfo ObjectInfo, retErr error) {
 	var err error
-
 	// This is a special case with size as '0' and object ends with
 	// a slash separator, we treat it like a valid operation and
 	// return success.
 	if isObjectDir(object, size) {
+		// Check if an object is present as one of the parent dir.
+		if fs.parentDirIsObject(bucket, path.Dir(object)) {
+			return ObjectInfo{}, toObjectErr(traceError(errFileAccessDenied), bucket, object)
+		}
 		return dirObjectInfo(bucket, object, size, metadata), nil
 	}
+
 	if err = checkPutObjectArgs(bucket, object, fs); err != nil {
 		return ObjectInfo{}, err
+	}
+
+	// Check if an object is present as one of the parent dir.
+	if fs.parentDirIsObject(bucket, path.Dir(object)) {
+		return ObjectInfo{}, toObjectErr(traceError(errFileAccessDenied), bucket, object)
 	}
 
 	if _, err = fs.statBucketDir(bucket); err != nil {
@@ -520,7 +640,7 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 	var wlk *lock.LockedFile
 	if bucket != minioMetaBucket {
 		bucketMetaDir := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix)
-		fsMetaPath := pathJoin(bucketMetaDir, bucket, object, fsMetaJSONFile)
+		fsMetaPath := pathJoin(bucketMetaDir, bucket, objectMetaPrefix, object, fsMetaJSONFile)
 		wlk, err = fs.rwPool.Create(fsMetaPath)
 		if err != nil {
 			return ObjectInfo{}, toObjectErr(traceError(err), bucket, object)
@@ -592,12 +712,12 @@ func (fs fsObjects) PutObject(bucket string, object string, size int64, data io.
 
 	newMD5Hex := hex.EncodeToString(md5Writer.Sum(nil))
 	// Update the md5sum if not set with the newly calculated one.
-	if len(metadata["md5Sum"]) == 0 {
-		metadata["md5Sum"] = newMD5Hex
+	if len(metadata["etag"]) == 0 {
+		metadata["etag"] = newMD5Hex
 	}
 
 	// md5Hex representation.
-	md5Hex := metadata["md5Sum"]
+	md5Hex := metadata["etag"]
 	if md5Hex != "" {
 		if newMD5Hex != md5Hex {
 			// Returns md5 mismatch.
@@ -647,7 +767,7 @@ func (fs fsObjects) DeleteObject(bucket, object string) error {
 	}
 
 	minioMetaBucketDir := pathJoin(fs.fsPath, minioMetaBucket)
-	fsMetaPath := pathJoin(minioMetaBucketDir, bucketMetaPrefix, bucket, object, fsMetaJSONFile)
+	fsMetaPath := pathJoin(minioMetaBucketDir, bucketMetaPrefix, bucket, objectMetaPrefix, object, fsMetaJSONFile)
 	if bucket != minioMetaBucket {
 		rwlk, lerr := fs.rwPool.Write(fsMetaPath)
 		if lerr == nil {
@@ -701,7 +821,7 @@ func (fs fsObjects) listDirFactory(isLeaf isLeafFunc) listDirFunc {
 // getObjectETag is a helper function, which returns only the md5sum
 // of the file on the disk.
 func (fs fsObjects) getObjectETag(bucket, entry string) (string, error) {
-	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, entry, fsMetaJSONFile)
+	fsMetaPath := pathJoin(fs.fsPath, minioMetaBucket, bucketMetaPrefix, bucket, objectMetaPrefix, entry, fsMetaJSONFile)
 
 	// Read `fs.json` to perhaps contend with
 	// parallel Put() operations.
@@ -729,8 +849,12 @@ func (fs fsObjects) getObjectETag(bucket, entry string) (string, error) {
 		}
 	}
 
-	fsMetaMap := parseFSMetaMap(fsMetaBuf)
-	return fsMetaMap["md5Sum"], nil
+	// Check if FS metadata is valid, if not return error.
+	if !isFSMetaValid(parseFSVersion(fsMetaBuf), parseFSFormat(fsMetaBuf)) {
+		return "", toObjectErr(traceError(errCorruptedFormat), bucket, entry)
+	}
+
+	return extractETag(parseFSMetaMap(fsMetaBuf)), nil
 }
 
 // ListObjects - list all objects at prefix upto maxKeys., optionally delimited by '/'. Maintains the list pool
@@ -781,8 +905,8 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		// Protect reading `fs.json`.
 		objectLock := globalNSMutex.NewNSLock(bucket, entry)
 		objectLock.RLock()
-		var md5Sum string
-		md5Sum, err = fs.getObjectETag(bucket, entry)
+		var etag string
+		etag, err = fs.getObjectETag(bucket, entry)
 		objectLock.RUnlock()
 		if err != nil {
 			return ObjectInfo{}, err
@@ -802,7 +926,7 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 			Size:    fi.Size(),
 			ModTime: fi.ModTime(),
 			IsDir:   fi.IsDir(),
-			MD5Sum:  md5Sum,
+			ETag:    etag,
 		}, nil
 	}
 

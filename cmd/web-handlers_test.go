@@ -370,7 +370,7 @@ func testListObjectsWebHandler(obj ObjectLayer, instanceType string, t TestErrHa
 
 	data := bytes.Repeat([]byte("a"), objectSize)
 
-	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data), map[string]string{"md5Sum": "c9a34cfc85d982698c6ac89f76071abd"}, "")
+	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data), map[string]string{"etag": "c9a34cfc85d982698c6ac89f76071abd"}, "")
 
 	if err != nil {
 		t.Fatalf("Was not able to upload an object, %v", err)
@@ -439,7 +439,7 @@ func TestWebHandlerRemoveObject(t *testing.T) {
 	ExecObjectLayerTest(t, testRemoveObjectWebHandler)
 }
 
-// testRemoveObjectWebHandler - Test RemoveObject web handler
+// testRemoveObjectWebHandler - Test RemoveObjectObject web handler
 func testRemoveObjectWebHandler(obj ObjectLayer, instanceType string, t TestErrHandler) {
 	// Register the API end points with XL/FS object layer.
 	apiRouter := initTestWebRPCEndPoint(obj)
@@ -465,21 +465,21 @@ func testRemoveObjectWebHandler(obj ObjectLayer, instanceType string, t TestErrH
 	data := bytes.Repeat([]byte("a"), objectSize)
 
 	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data),
-		map[string]string{"md5Sum": "c9a34cfc85d982698c6ac89f76071abd"}, "")
+		map[string]string{"etag": "c9a34cfc85d982698c6ac89f76071abd"}, "")
 	if err != nil {
 		t.Fatalf("Was not able to upload an object, %v", err)
 	}
 
 	objectName = "a/object"
 	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data),
-		map[string]string{"md5Sum": "c9a34cfc85d982698c6ac89f76071abd"}, "")
+		map[string]string{"etag": "c9a34cfc85d982698c6ac89f76071abd"}, "")
 	if err != nil {
 		t.Fatalf("Was not able to upload an object, %v", err)
 	}
 
-	removeObjectRequest := RemoveObjectArgs{BucketName: bucketName, Objects: []string{"a/", "object"}}
-	removeObjectReply := &WebGenericRep{}
-	req, err := newTestWebRPCRequest("Web.RemoveObject", authorization, removeObjectRequest)
+	removeRequest := RemoveObjectArgs{BucketName: bucketName, Objects: []string{"a/", "object"}}
+	removeReply := &WebGenericRep{}
+	req, err := newTestWebRPCRequest("Web.RemoveObject", authorization, removeRequest)
 	if err != nil {
 		t.Fatalf("Failed to create HTTP request: <ERROR> %v", err)
 	}
@@ -487,14 +487,14 @@ func testRemoveObjectWebHandler(obj ObjectLayer, instanceType string, t TestErrH
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected the response status to be 200, but instead found `%d`", rec.Code)
 	}
-	err = getTestWebRPCResponse(rec, &removeObjectReply)
+	err = getTestWebRPCResponse(rec, &removeReply)
 	if err != nil {
 		t.Fatalf("Failed, %v", err)
 	}
 
-	removeObjectRequest = RemoveObjectArgs{BucketName: bucketName, Objects: []string{"a/", "object"}}
-	removeObjectReply = &WebGenericRep{}
-	req, err = newTestWebRPCRequest("Web.RemoveObject", authorization, removeObjectRequest)
+	removeRequest = RemoveObjectArgs{BucketName: bucketName, Objects: []string{"a/", "object"}}
+	removeReply = &WebGenericRep{}
+	req, err = newTestWebRPCRequest("Web.RemoveObject", authorization, removeRequest)
 	if err != nil {
 		t.Fatalf("Failed to create HTTP request: <ERROR> %v", err)
 	}
@@ -502,9 +502,27 @@ func testRemoveObjectWebHandler(obj ObjectLayer, instanceType string, t TestErrH
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected the response status to be 200, but instead found `%d`", rec.Code)
 	}
-	err = getTestWebRPCResponse(rec, &removeObjectReply)
+	err = getTestWebRPCResponse(rec, &removeReply)
 	if err != nil {
 		t.Fatalf("Failed, %v", err)
+	}
+
+	removeRequest = RemoveObjectArgs{BucketName: bucketName}
+	removeReply = &WebGenericRep{}
+	req, err = newTestWebRPCRequest("Web.RemoveObject", authorization, removeRequest)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP request: <ERROR> %v", err)
+	}
+	apiRouter.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected the response status to be 200, but instead found `%d`", rec.Code)
+	}
+	b, err := ioutil.ReadAll(rec.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("Invalid arguments specified")) {
+		t.Fatalf("Expected response wrong %s", string(b))
 	}
 }
 
@@ -770,7 +788,7 @@ func testDownloadWebHandler(obj ObjectLayer, instanceType string, t TestErrHandl
 	}
 
 	content := []byte("temporary file's content")
-	_, err = obj.PutObject(bucketName, objectName, int64(len(content)), bytes.NewReader(content), map[string]string{"md5Sum": "01ce59706106fe5e02e7f55fffda7f34"}, "")
+	_, err = obj.PutObject(bucketName, objectName, int64(len(content)), bytes.NewReader(content), map[string]string{"etag": "01ce59706106fe5e02e7f55fffda7f34"}, "")
 	if err != nil {
 		t.Fatalf("Was not able to upload an object, %v", err)
 	}
@@ -922,7 +940,7 @@ func testWebPresignedGetHandler(obj ObjectLayer, instanceType string, t TestErrH
 	}
 
 	data := bytes.Repeat([]byte("a"), objectSize)
-	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data), map[string]string{"md5Sum": "c9a34cfc85d982698c6ac89f76071abd"}, "")
+	_, err = obj.PutObject(bucketName, objectName, int64(len(data)), bytes.NewReader(data), map[string]string{"etag": "c9a34cfc85d982698c6ac89f76071abd"}, "")
 	if err != nil {
 		t.Fatalf("Was not able to upload an object, %v", err)
 	}

@@ -170,7 +170,40 @@ func (s *TestSuiteCommon) TestObjectDir(c *C) {
 	response, err = client.Do(request)
 
 	c.Assert(err, IsNil)
-	verifyError(c, response, "XMinioInvalidObjectName", "Object name contains unsupported characters. Unsupported characters are `^*|\\\"", http.StatusBadRequest)
+	verifyError(c, response, "XMinioInvalidObjectName", "Object name contains unsupported characters.", http.StatusBadRequest)
+
+	request, err = newTestSignedRequest("HEAD", getHeadObjectURL(s.endPoint, bucketName, "my-object-directory/"),
+		0, nil, s.accessKey, s.secretKey, s.signer)
+	c.Assert(err, IsNil)
+
+	client = http.Client{Transport: s.transport}
+	// execute the HTTP request.
+	response, err = client.Do(request)
+
+	c.Assert(err, IsNil)
+	c.Assert(response.StatusCode, Equals, http.StatusNotFound)
+
+	request, err = newTestSignedRequest("GET", getGetObjectURL(s.endPoint, bucketName, "my-object-directory/"),
+		0, nil, s.accessKey, s.secretKey, s.signer)
+	c.Assert(err, IsNil)
+
+	client = http.Client{Transport: s.transport}
+	// execute the HTTP request.
+	response, err = client.Do(request)
+
+	c.Assert(err, IsNil)
+	c.Assert(response.StatusCode, Equals, http.StatusNotFound)
+
+	request, err = newTestSignedRequest("DELETE", getDeleteObjectURL(s.endPoint, bucketName, "my-object-directory/"),
+		0, nil, s.accessKey, s.secretKey, s.signer)
+	c.Assert(err, IsNil)
+
+	client = http.Client{Transport: s.transport}
+	// execute the HTTP request.
+	response, err = client.Do(request)
+
+	c.Assert(err, IsNil)
+	c.Assert(response.StatusCode, Equals, http.StatusNoContent)
 }
 
 func (s *TestSuiteCommon) TestBucketSQSNotificationAMQP(c *C) {
@@ -1118,7 +1151,7 @@ func (s *TestSuiteCommon) TestPutObject(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(response.StatusCode, Equals, http.StatusOK)
 	// The response Etag header should contain Md5sum of an empty string.
-	c.Assert(response.Header.Get("Etag"), Equals, "\""+emptyStrMd5Sum+"\"")
+	c.Assert(response.Header.Get("Etag"), Equals, "\""+emptyETag+"\"")
 }
 
 // TestListBuckets - Make request for listing of all buckets.
@@ -1245,7 +1278,7 @@ func (s *TestSuiteCommon) TestPutObjectLongName(c *C) {
 
 	response, err = client.Do(request)
 	c.Assert(err, IsNil)
-	verifyError(c, response, "XMinioInvalidObjectName", "Object name contains unsupported characters. Unsupported characters are `^*|\\\"", http.StatusBadRequest)
+	verifyError(c, response, "XMinioInvalidObjectName", "Object name contains unsupported characters.", http.StatusBadRequest)
 }
 
 // TestNotBeAbleToCreateObjectInNonexistentBucket - Validates the error response
@@ -1808,7 +1841,7 @@ func (s *TestSuiteCommon) TestGetObjectLarge11MiB(c *C) {
 	getContent, err := ioutil.ReadAll(response.Body)
 	c.Assert(err, IsNil)
 
-	// Get md5Sum of the response content.
+	// Get etag of the response content.
 	getMD5 := getMD5Hash(getContent)
 
 	// Compare putContent and getContent.
@@ -1833,25 +1866,23 @@ func (s *TestSuiteCommon) TestGetPartialObjectMisAligned(c *C) {
 	c.Assert(response.StatusCode, Equals, http.StatusOK)
 
 	var buffer bytes.Buffer
-	line := `1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,1234567890,
-	1234567890,1234567890,1234567890,123`
-
-	rand.Seed(UTCNow().UnixNano())
-	// Create a misalgined data.
-	for i := 0; i < 13*rand.Intn(1<<16); i++ {
-		buffer.WriteString(fmt.Sprintf("[%05d] %s\n", i, line[:rand.Intn(1<<8)]))
+	// data to be written into buffer.
+	data := "1234567890"
+	// seed the random number generator once.
+	rand.Seed(3)
+	// generate a random number between 13 and 200.
+	randInt := getRandomRange(13, 200, -1)
+	// write into buffer till length of the buffer is greater than the generated random number.
+	for i := 0; i <= randInt; i += 10 {
+		buffer.WriteString(data)
 	}
-	putContent := buffer.String()
-	buf := bytes.NewReader([]byte(putContent))
-
+	// String content which is used for put object range test.
+	putBytes := buffer.Bytes()
+	putBytes = putBytes[:randInt]
+	// randomize the order of bytes in the byte array and create a reader.
+	putBytes = randomizeBytes(putBytes, -1)
+	buf := bytes.NewReader(putBytes)
+	putContent := string(putBytes)
 	objectName := "test-big-file"
 	// HTTP request to upload the object.
 	request, err = newTestSignedRequest("PUT", getPutObjectURL(s.endPoint, bucketName, objectName),
@@ -1882,6 +1913,7 @@ func (s *TestSuiteCommon) TestGetPartialObjectMisAligned(c *C) {
 		// request for last 7 bytes of the object.
 		{"-7", putContent[len(putContent)-7:]},
 	}
+
 	for _, t := range testCases {
 		// HTTP request to download the object.
 		request, err = newTestSignedRequest("GET", getGetObjectURL(s.endPoint, bucketName, objectName),
@@ -2473,8 +2505,8 @@ func (s *TestSuiteCommon) TestObjectValidMD5(c *C) {
 	// Create a byte array of 5MB.
 	// content for the object to be uploaded.
 	data := bytes.Repeat([]byte("0123456789abcdef"), 5*humanize.MiByte/16)
-	// calculate md5Sum of the data.
-	md5SumBase64 := getMD5HashBase64(data)
+	// calculate etag of the data.
+	etagBase64 := getMD5HashBase64(data)
 
 	buffer1 := bytes.NewReader(data)
 	objectName := "test-1-object"
@@ -2483,7 +2515,7 @@ func (s *TestSuiteCommon) TestObjectValidMD5(c *C) {
 		int64(buffer1.Len()), buffer1, s.accessKey, s.secretKey, s.signer)
 	c.Assert(err, IsNil)
 	// set the Content-Md5 to be the hash to content.
-	request.Header.Set("Content-Md5", md5SumBase64)
+	request.Header.Set("Content-Md5", etagBase64)
 	client = http.Client{Transport: s.transport}
 	response, err = client.Do(request)
 	c.Assert(err, IsNil)
@@ -2546,14 +2578,14 @@ func (s *TestSuiteCommon) TestObjectMultipart(c *C) {
 	// content for the part to be uploaded.
 	// Create a byte array of 5MB.
 	data := bytes.Repeat([]byte("0123456789abcdef"), 5*humanize.MiByte/16)
-	// calculate md5Sum of the data.
+	// calculate etag of the data.
 	md5SumBase64 := getMD5HashBase64(data)
 
 	buffer1 := bytes.NewReader(data)
 	// HTTP request for the part to be uploaded.
 	request, err = newTestSignedRequest("PUT", getPartUploadURL(s.endPoint, bucketName, objectName, uploadID, "1"),
 		int64(buffer1.Len()), buffer1, s.accessKey, s.secretKey, s.signer)
-	// set the Content-Md5 header to the base64 encoding the md5Sum of the content.
+	// set the Content-Md5 header to the base64 encoding the etag of the content.
 	request.Header.Set("Content-Md5", md5SumBase64)
 	c.Assert(err, IsNil)
 
@@ -2567,14 +2599,14 @@ func (s *TestSuiteCommon) TestObjectMultipart(c *C) {
 	// Create a byte array of 1 byte.
 	data = []byte("0")
 
-	// calculate md5Sum of the data.
+	// calculate etag of the data.
 	md5SumBase64 = getMD5HashBase64(data)
 
 	buffer2 := bytes.NewReader(data)
 	// HTTP request for the second part to be uploaded.
 	request, err = newTestSignedRequest("PUT", getPartUploadURL(s.endPoint, bucketName, objectName, uploadID, "2"),
 		int64(buffer2.Len()), buffer2, s.accessKey, s.secretKey, s.signer)
-	// set the Content-Md5 header to the base64 encoding the md5Sum of the content.
+	// set the Content-Md5 header to the base64 encoding the etag of the content.
 	request.Header.Set("Content-Md5", md5SumBase64)
 	c.Assert(err, IsNil)
 

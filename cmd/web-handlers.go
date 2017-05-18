@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -255,16 +256,22 @@ func (web *webAPIHandlers) ListObjects(r *http.Request, args *ListObjectsArgs, r
 	return nil
 }
 
-// RemoveObjectArgs - args to remove an object
-// JSON will look like:
-// '{"bucketname":"testbucket","objects":["photos/hawaii/","photos/maldives/","photos/sanjose.jpg"]}'
+// RemoveObjectArgs - args to remove an object, JSON will look like.
+//
+// {
+//     "bucketname": "testbucket",
+//     "objects": [
+//         "photos/hawaii/",
+//         "photos/maldives/",
+//         "photos/sanjose.jpg"
+//     ]
+// }
 type RemoveObjectArgs struct {
-	Objects    []string `json:"objects"`    // can be files or sub-directories
-	Prefix     string   `json:"prefix"`     // current directory in the browser-ui
-	BucketName string   `json:"bucketname"` // bucket name.
+	Objects    []string `json:"objects"`    // Contains objects, prefixes.
+	BucketName string   `json:"bucketname"` // Contains bucket name.
 }
 
-// RemoveObject - removes an object.
+// RemoveObject - removes an object, or all the objects at a given prefix.
 func (web *webAPIHandlers) RemoveObject(r *http.Request, args *RemoveObjectArgs, reply *WebGenericRep) error {
 	objectAPI := web.ObjectAPI()
 	if objectAPI == nil {
@@ -273,51 +280,35 @@ func (web *webAPIHandlers) RemoveObject(r *http.Request, args *RemoveObjectArgs,
 	if !isHTTPRequestValid(r) {
 		return toJSONError(errAuthentication)
 	}
+
 	if args.BucketName == "" || len(args.Objects) == 0 {
-		return toJSONError(errUnexpected)
+		return toJSONError(errInvalidArgument)
 	}
+
 	var err error
-objectLoop:
-	for _, object := range args.Objects {
-		remove := func(objectName string) error {
-			objectLock := globalNSMutex.NewNSLock(args.BucketName, objectName)
-			objectLock.Lock()
-			defer objectLock.Unlock()
-			err = objectAPI.DeleteObject(args.BucketName, objectName)
-			if err == nil {
-				// Notify object deleted event.
-				eventNotify(eventData{
-					Type:   ObjectRemovedDelete,
-					Bucket: args.BucketName,
-					ObjInfo: ObjectInfo{
-						Name: objectName,
-					},
-					ReqParams: extractReqParams(r),
-				})
-			}
-			return err
-		}
-		if !hasSuffix(object, slashSeparator) {
-			// If not a directory, remove the object.
-			err = remove(object)
-			if err != nil {
-				break objectLoop
+next:
+	for _, objectName := range args.Objects {
+		// If not a directory, remove the object.
+		if !hasSuffix(objectName, slashSeparator) && objectName != "" {
+			if err = deleteObject(objectAPI, args.BucketName, objectName, r); err != nil {
+				break next
 			}
 			continue
 		}
+
 		// For directories, list the contents recursively and remove.
 		marker := ""
 		for {
 			var lo ListObjectsInfo
-			lo, err = objectAPI.ListObjects(args.BucketName, object, marker, "", 1000)
+			lo, err = objectAPI.ListObjects(args.BucketName, objectName, marker, "", 1000)
 			if err != nil {
-				break objectLoop
+				break next
 			}
 			marker = lo.NextMarker
 			for _, obj := range lo.Objects {
-				err = remove(obj.Name)
+				err = deleteObject(objectAPI, args.BucketName, obj.Name, r)
 				if err != nil {
-					break objectLoop
+					break next
 				}
 			}
 			if !lo.IsTruncated {
@@ -577,17 +568,24 @@ func (web *webAPIHandlers) DownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := r.URL.Query().Get("token")
-
-	if !isAuthTokenValid(token) {
-		writeWebErrorResponse(w, errAuthentication)
-		return
-	}
+	// Auth is done after reading the body to accommodate for anonymous requests
+	// when bucket policy is enabled.
 	var args DownloadZipArgs
-	decodeErr := json.NewDecoder(r.Body).Decode(&args)
+	tenKB := 10 * 1024 // To limit r.Body to take care of misbehaving anonymous client.
+	decodeErr := json.NewDecoder(io.LimitReader(r.Body, int64(tenKB))).Decode(&args)
 	if decodeErr != nil {
 		writeWebErrorResponse(w, decodeErr)
 		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if !isAuthTokenValid(token) {
+		for _, object := range args.Objects {
+			if !isBucketActionAllowed("s3:GetObject", args.BucketName, pathJoin(args.Prefix, object)) {
+				writeWebErrorResponse(w, errAuthentication)
+				return
+			}
+		}
 	}
 
 	archive := zip.NewWriter(w)
@@ -970,6 +968,12 @@ func toWebAPIError(err error) APIError {
 		return APIError{
 			Code:           "AllAccessDisabled",
 			HTTPStatusCode: http.StatusForbidden,
+			Description:    err.Error(),
+		}
+	} else if err == errInvalidArgument {
+		return APIError{
+			Code:           "InvalidArgument",
+			HTTPStatusCode: http.StatusBadRequest,
 			Description:    err.Error(),
 		}
 	}

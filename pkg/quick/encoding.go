@@ -21,12 +21,13 @@ package quick
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	os2 "github.com/minio/minio/pkg/x/os"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -55,12 +56,15 @@ func (j jsonEncoding) Unmarshal(b []byte, v interface{}) error {
 	err := json.Unmarshal(b, v)
 	if err != nil {
 		// Try to return a sophisticated json error message if possible
-		switch err := err.(type) {
+		switch jerr := err.(type) {
 		case *json.SyntaxError:
-			return FormatJSONSyntaxError(bytes.NewReader(b), err)
-		default:
-			return err
+			return fmt.Errorf("Unable to parse JSON schema due to a syntax error at '%s'",
+				FormatJSONSyntaxError(bytes.NewReader(b), jerr.Offset))
+		case *json.UnmarshalTypeError:
+			return fmt.Errorf("Unable to parse JSON, type '%v' cannot be converted into the Go '%v' type",
+				jerr.Value, jerr.Type)
 		}
+		return err
 	}
 	return nil
 }
@@ -122,7 +126,7 @@ func saveFileConfig(filename string, v interface{}) error {
 // decoder format according to the filename extension. If no
 // extension is provided, json will be selected by default.
 func loadFileConfig(filename string, v interface{}) error {
-	if _, err := os.Stat(filename); err != nil {
+	if _, err := os2.Stat(filename); err != nil {
 		return err
 	}
 	fileData, err := ioutil.ReadFile(filename)

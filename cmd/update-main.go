@@ -82,7 +82,7 @@ func getCurrentReleaseTime(minioVersion, minioBinaryPath string) (releaseTime ti
 	}
 
 	// Looks like version is minio non-standard, we use minio binary's ModTime as release time.
-	fi, err := os.Stat(minioBinaryPath)
+	fi, err := osStat(minioBinaryPath)
 	if err != nil {
 		err = fmt.Errorf("Unable to get ModTime of %s. %s", minioBinaryPath, err)
 	} else {
@@ -173,7 +173,6 @@ func downloadReleaseData(releaseChecksumURL string, timeout time.Duration, mode 
 	if resp.StatusCode != http.StatusOK {
 		return data, fmt.Errorf("Error downloading URL %s. Response: %v", releaseChecksumURL, resp.Status)
 	}
-
 	dataBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return data, fmt.Errorf("Error reading response. %s", err)
@@ -185,7 +184,11 @@ func downloadReleaseData(releaseChecksumURL string, timeout time.Duration, mode 
 
 // DownloadReleaseData - downloads release data from minio official server.
 func DownloadReleaseData(timeout time.Duration, mode string) (data string, err error) {
-	return downloadReleaseData(minioReleaseURL+"minio.shasum", timeout, mode)
+	data, err = downloadReleaseData(minioReleaseURL+"minio.shasum", timeout, mode)
+	if err == nil {
+		return data, nil
+	}
+	return downloadReleaseData(minioReleaseURL+"minio.sha256sum", timeout, mode)
 }
 
 func parseReleaseData(data string) (releaseTime time.Time, err error) {

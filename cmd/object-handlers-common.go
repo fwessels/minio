@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -58,8 +59,8 @@ func checkCopyObjectPreconditions(w http.ResponseWriter, r *http.Request, objInf
 		// set object-related metadata headers
 		w.Header().Set("Last-Modified", objInfo.ModTime.UTC().Format(http.TimeFormat))
 
-		if objInfo.MD5Sum != "" {
-			w.Header().Set("ETag", "\""+objInfo.MD5Sum+"\"")
+		if objInfo.ETag != "" {
+			w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
 		}
 	}
 	// x-amz-copy-source-if-modified-since: Return the object only if it has been modified
@@ -94,7 +95,7 @@ func checkCopyObjectPreconditions(w http.ResponseWriter, r *http.Request, objInf
 	// same as the one specified; otherwise return a 412 (precondition failed).
 	ifMatchETagHeader := r.Header.Get("x-amz-copy-source-if-match")
 	if ifMatchETagHeader != "" {
-		if objInfo.MD5Sum != "" && !isETagEqual(objInfo.MD5Sum, ifMatchETagHeader) {
+		if objInfo.ETag != "" && !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
 			// If the object ETag does not match with the specified ETag.
 			writeHeaders()
 			writeErrorResponse(w, ErrPreconditionFailed, r.URL)
@@ -106,7 +107,7 @@ func checkCopyObjectPreconditions(w http.ResponseWriter, r *http.Request, objInf
 	// one specified otherwise, return a 304 (not modified).
 	ifNoneMatchETagHeader := r.Header.Get("x-amz-copy-source-if-none-match")
 	if ifNoneMatchETagHeader != "" {
-		if objInfo.MD5Sum != "" && isETagEqual(objInfo.MD5Sum, ifNoneMatchETagHeader) {
+		if objInfo.ETag != "" && isETagEqual(objInfo.ETag, ifNoneMatchETagHeader) {
 			// If the object ETag matches with the specified ETag.
 			writeHeaders()
 			writeErrorResponse(w, ErrPreconditionFailed, r.URL)
@@ -143,8 +144,8 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, objInfo ObjectIn
 		// set object-related metadata headers
 		w.Header().Set("Last-Modified", objInfo.ModTime.UTC().Format(http.TimeFormat))
 
-		if objInfo.MD5Sum != "" {
-			w.Header().Set("ETag", "\""+objInfo.MD5Sum+"\"")
+		if objInfo.ETag != "" {
+			w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
 		}
 	}
 	// If-Modified-Since : Return the object only if it has been modified since the specified time,
@@ -179,7 +180,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, objInfo ObjectIn
 	// otherwise return a 412 (precondition failed).
 	ifMatchETagHeader := r.Header.Get("If-Match")
 	if ifMatchETagHeader != "" {
-		if !isETagEqual(objInfo.MD5Sum, ifMatchETagHeader) {
+		if !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
 			// If the object ETag does not match with the specified ETag.
 			writeHeaders()
 			writeErrorResponse(w, ErrPreconditionFailed, r.URL)
@@ -191,7 +192,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, objInfo ObjectIn
 	// one specified otherwise, return a 304 (not modified).
 	ifNoneMatchETagHeader := r.Header.Get("If-None-Match")
 	if ifNoneMatchETagHeader != "" {
-		if isETagEqual(objInfo.MD5Sum, ifNoneMatchETagHeader) {
+		if isETagEqual(objInfo.ETag, ifNoneMatchETagHeader) {
 			// If the object ETag matches with the specified ETag.
 			writeHeaders()
 			w.WriteHeader(http.StatusNotModified)
@@ -223,4 +224,37 @@ func canonicalizeETag(etag string) string {
 // are equal, false otherwise
 func isETagEqual(left, right string) bool {
 	return canonicalizeETag(left) == canonicalizeETag(right)
+}
+
+// deleteObject is a convenient wrapper to delete an object, this
+// is a common function to be called from object handlers and
+// web handlers.
+func deleteObject(obj ObjectLayer, bucket, object string, r *http.Request) (err error) {
+	// Acquire a write lock before deleting the object.
+	objectLock := globalNSMutex.NewNSLock(bucket, object)
+	objectLock.Lock()
+	defer objectLock.Unlock()
+
+	// Proceed to delete the object.
+	if err = obj.DeleteObject(bucket, object); err != nil {
+		return err
+	}
+
+	// Get host and port from Request.RemoteAddr.
+	host, port, _ := net.SplitHostPort(r.RemoteAddr)
+
+	// Notify object deleted event.
+	eventNotify(eventData{
+		Type:   ObjectRemovedDelete,
+		Bucket: bucket,
+		ObjInfo: ObjectInfo{
+			Name: object,
+		},
+		ReqParams: extractReqParams(r),
+		UserAgent: r.UserAgent(),
+		Host:      host,
+		Port:      port,
+	})
+
+	return nil
 }

@@ -121,7 +121,9 @@ func (c *ConnMux) PeekProtocol() (string, error) {
 // bytes received from the client.
 func (c *ConnMux) Read(b []byte) (n int, err error) {
 	// Update total incoming number of bytes.
-	defer globalConnStats.incInputBytes(n)
+	defer func() {
+		globalConnStats.incInputBytes(n)
+	}()
 
 	n, err = c.peeker.Read(b)
 	if err != nil {
@@ -141,7 +143,9 @@ func (c *ConnMux) Read(b []byte) (n int, err error) {
 // keeps track of the total bytes written by the server.
 func (c *ConnMux) Write(b []byte) (n int, err error) {
 	// Update total outgoing number of bytes.
-	defer globalConnStats.incOutputBytes(n)
+	defer func() {
+		globalConnStats.incOutputBytes(n)
+	}()
 
 	// Call the conn write wrapper.
 	return c.Conn.Write(b)
@@ -264,7 +268,7 @@ func newListenerMux(listener net.Listener, config *tls.Config) *ListenerMux {
 					// is a TLS connection, if not we should close and reject
 					// such a connection.
 					if cerr = tlsConn.Handshake(); cerr != nil {
-						errorIf(cerr, "TLS handshake failed")
+						// Close for junk message.
 						tlsConn.Close()
 						return
 					}

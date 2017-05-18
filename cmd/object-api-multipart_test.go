@@ -1782,8 +1782,8 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 	}
 
 	uploadIDs = append(uploadIDs, uploadID)
-	// Parts with size greater than 5 MB.
-	// Generating a 6MB byte array.
+	// Parts with size greater than 5 MiB.
+	// Generating a 6MiB byte array.
 	validPart := bytes.Repeat([]byte("abcdef"), 1*humanize.MiByte)
 	validPartMD5 := getMD5Hash(validPart)
 	// Create multipart parts.
@@ -1930,7 +1930,7 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 		if actualErr == nil && testCase.shouldPass {
 
 			// Asserting IsTruncated.
-			if actualResult.MD5Sum != testCase.expectedS3MD5 {
+			if actualResult.ETag != testCase.expectedS3MD5 {
 				t.Errorf("Test %d: %s: Expected the result to be \"%v\", but found it to \"%v\"", i+1, instanceType, testCase.expectedS3MD5, actualResult)
 			}
 		}

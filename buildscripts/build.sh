@@ -5,7 +5,7 @@ _init() {
     LDFLAGS=$(go run buildscripts/gen-ldflags.go)
 
     # Extract release tag
-    release_tag=$(echo $LDFLAGS | awk {'print $4'} | cut -f2 -d=)
+    release_tag=$(echo $LDFLAGS | awk {'print $6'} | cut -f2 -d=)
 
     # Verify release tag.
     if [ -z "$release_tag" ]; then
@@ -43,8 +43,10 @@ go_build() {
     release_bin="$release_str/$os-$arch/$(basename $package).$release_tag"
     # Release binary downloadable name
     release_real_bin="$release_str/$os-$arch/$(basename $package)"
-    # Release shasum name
-    release_shasum="$release_str/$os-$arch/$(basename $package).shasum"
+    # Release sha256sum name
+    release_sha256sum="$release_str/$os-$arch/$(basename $package).${release_tag}.sha256sum"
+    # Release sha256sum default
+    release_sha256sum_default="$release_str/$os-$arch/$(basename $package).sha256sum"
 
     # Go build to build the binary.
     if [ "${arch}" == "arm" ]; then
@@ -58,12 +60,15 @@ go_build() {
         ## Copy
         $CP -p $release_bin_6 $release_real_bin_6
 
-        # Release shasum name
-        release_shasum_6="$release_str/$os-${arch}6vl/$(basename $package).shasum"
+        # Release sha256sum name
+        release_sha256sum_6="$release_str/$os-${arch}6vl/$(basename $package).${release_tag}.sha256sum"
+        # Release sha256sum default
+        release_sha256sum_default_6="$release_str/$os-${arch}6vl/$(basename $package).sha256sum"
 
         # Calculate shasum
-        shasum_str=$(${SHASUM} ${release_bin_6})
-        echo ${shasum_str} | $SED "s/$release_str\/$os-${arch}6vl\///g" > $release_shasum_6
+        shasum_str=$(${SHASUM} -a 256 ${release_bin_6})
+        echo ${shasum_str} | $SED "s/$release_str\/$os-${arch}6vl\///g" > $release_sha256sum_6
+        $CP -p $release_sha256sum_6 $release_sha256sum_default_6
 
         # Release binary downloadable name
         release_real_bin_7="$release_str/$os-$arch/$(basename $package)"
@@ -75,12 +80,15 @@ go_build() {
         ## Copy
         $CP -p $release_bin_7 $release_real_bin_7
 
-        # Release shasum name
-        release_shasum_7="$release_str/$os-$arch/$(basename $package).shasum"
+        # Release sha256sum name
+        release_sha256sum_7="$release_str/$os-$arch/$(basename $package).${release_tag}.sha256sum"
+        # Release sha256sum default
+        release_sha256sum_default_7="$release_str/$os-${arch}/$(basename $package).sha256sum"
 
-        # Calculate shasum
-        shasum_str=$(${SHASUM} ${release_bin_7})
-        echo ${shasum_str} | $SED "s/$release_str\/$os-$arch\///g" > $release_shasum_7
+        # Calculate sha256sum
+        shasum_str=$(${SHASUM} -a 256 ${release_bin_7})
+        echo ${shasum_str} | $SED "s/$release_str\/$os-$arch\///g" > $release_sha256sum_7
+        $CP -p $release_sha256sum_7 $release_sha256sum_default_7
     else
         GOOS=$os GOARCH=$arch go build --ldflags "${LDFLAGS}" -o $release_bin
 
@@ -92,8 +100,9 @@ go_build() {
         fi
 
         # Calculate shasum
-        shasum_str=$(${SHASUM} ${release_bin})
-        echo ${shasum_str} | $SED "s/$release_str\/$os-$arch\///g" > $release_shasum
+        sha256sum_str=$(${SHASUM} -a 256 ${release_bin})
+        echo ${sha256sum_str} | $SED "s/$release_str\/$os-$arch\///g" > $release_sha256sum
+        $CP -p $release_sha256sum $release_sha256sum_default
     fi
 }
 

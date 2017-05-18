@@ -101,8 +101,8 @@ type ObjectInfo struct {
 	// IsDir indicates if the object is prefix.
 	IsDir bool
 
-	// Hex encoded md5 checksum of the object.
-	MD5Sum string
+	// Hex encoded unique entity tag of the object.
+	ETag string
 
 	// A standard MIME type describing the format of the object.
 	ContentType string
@@ -213,6 +213,30 @@ type ListObjectsInfo struct {
 	// NOTE: This element is returned only if you have delimiter request parameter
 	// specified.
 	NextMarker string
+
+	// List of objects info for this request.
+	Objects []ObjectInfo
+
+	// List of prefixes for this request.
+	Prefixes []string
+}
+
+// ListObjectsV2Info - container for list objects version 2.
+type ListObjectsV2Info struct {
+	// Indicates whether the returned list objects response is truncated. A
+	// value of true indicates that the list was truncated. The list can be truncated
+	// if the number of objects exceeds the limit allowed or specified
+	// by max keys.
+	IsTruncated bool
+
+	// When response is truncated (the IsTruncated element value in the response
+	// is true), you can use the key name in this field as marker in the subsequent
+	// request to get next set of objects.
+	//
+	// NOTE: This element is returned only if you have delimiter request parameter
+	// specified.
+	ContinuationToken     string
+	NextContinuationToken string
 
 	// List of objects info for this request.
 	Objects []ObjectInfo

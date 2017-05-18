@@ -36,6 +36,10 @@ USAGE:
 FLAGS:
   {{range .VisibleFlags}}{{.}}
   {{end}}{{end}}
+BACKEND:
+  azure: Microsoft Azure Blob Storage. Default ENDPOINT is https://core.windows.net
+  s3: Amazon Simple Storage Service (S3). Default ENDPOINT is https://s3.amazonaws.com
+
 ENVIRONMENT VARIABLES:
   ACCESS:
      MINIO_ACCESS_KEY: Username or access key of your storage backend.
@@ -43,25 +47,32 @@ ENVIRONMENT VARIABLES:
 
 EXAMPLES:
   1. Start minio gateway server for Azure Blob Storage backend.
+      $ export MINIO_ACCESS_KEY=azureaccountname
+      $ export MINIO_SECRET_KEY=azureaccountkey
       $ {{.HelpName}} azure
 
-  2. Start minio gateway server bound to a specific ADDRESS:PORT.
-      $ {{.HelpName}} --address 192.168.1.101:9000 azure
+  2. Start minio gateway server for AWS S3 backend.
+      $ export MINIO_ACCESS_KEY=accesskey
+      $ export MINIO_SECRET_KEY=secretkey
+      $ {{.HelpName}} s3
 
-  3. Gateway server connecting to a custom Azure Blob Storage endpoint.
-      $ {{.HelpName}} azure https://azure-stack.domain.com
-
+  3. Start minio gateway server for S3 backend on custom endpoint.
+      $ export MINIO_ACCESS_KEY=Q3AM3UQ867SPQQA43P2F
+      $ export MINIO_SECRET_KEY=zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG
+      $ {{.HelpName}} s3 https://play.minio.io:9000
 `
 
 var gatewayCmd = cli.Command{
 	Name:               "gateway",
-	Usage:              "Start object storage gateway server.",
+	Usage:              "Start object storage gateway.",
 	Action:             gatewayMain,
 	CustomHelpTemplate: gatewayTemplate,
-	Flags: append(serverFlags, cli.BoolFlag{
-		Name:  "quiet",
-		Usage: "Disable startup banner.",
-	}),
+	Flags: append(serverFlags,
+		cli.BoolFlag{
+			Name:  "quiet",
+			Usage: "Disable startup banner.",
+		},
+	),
 	HideHelpCommand: true,
 }
 
@@ -70,6 +81,7 @@ type gatewayBackend string
 
 const (
 	azureBackend gatewayBackend = "azure"
+	s3Backend    gatewayBackend = "s3"
 	// Add more backends here.
 )
 
@@ -89,11 +101,15 @@ func mustGetGatewayCredsFromEnv() (accessKey, secretKey string) {
 //
 // - Azure Blob Storage.
 // - Add your favorite backend here.
-func newGatewayLayer(backendType, endPoint, accessKey, secretKey string, secure bool) (GatewayLayer, error) {
-	if gatewayBackend(backendType) != azureBackend {
-		return nil, fmt.Errorf("Unrecognized backend type %s", backendType)
+func newGatewayLayer(backendType, endpoint, accessKey, secretKey string, secure bool) (GatewayLayer, error) {
+	switch gatewayBackend(backendType) {
+	case azureBackend:
+		return newAzureLayer(endpoint, accessKey, secretKey, secure)
+	case s3Backend:
+		return newS3Gateway(endpoint, accessKey, secretKey, secure)
 	}
-	return newAzureLayer(endPoint, accessKey, secretKey, secure)
+
+	return nil, fmt.Errorf("Unrecognized backend type %s", backendType)
 }
 
 // Initialize a new gateway config.
@@ -130,6 +146,7 @@ func parseGatewayEndpoint(arg string) (endPoint string, secure bool, err error) 
 		// Default connection will be "secure".
 		arg = "https://" + arg
 	}
+
 	u, err := url.Parse(arg)
 	if err != nil {
 		return "", false, err
@@ -187,6 +204,8 @@ func gatewayMain(ctx *cli.Context) {
 	registerGatewayAPIRouter(router, newObject)
 
 	var handlerFns = []HandlerFunc{
+		// Validate all the incoming paths.
+		setPathValidityHandler,
 		// Limits all requests size to a maximum fixed limit
 		setRequestSizeLimitHandler,
 		// Adds 'crossdomain.xml' policy handler to serve legacy flash clients.
@@ -230,6 +249,8 @@ func gatewayMain(ctx *cli.Context) {
 		mode := ""
 		if gatewayBackend(backendType) == azureBackend {
 			mode = globalMinioModeGatewayAzure
+		} else if gatewayBackend(backendType) == s3Backend {
+			mode = globalMinioModeGatewayS3
 		}
 		checkUpdate(mode)
 		apiEndpoints := getAPIEndpoints(apiServer.Addr)
