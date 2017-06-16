@@ -34,7 +34,7 @@ import (
 // ----------
 // This implementation of the GET operation retrieves object. To use GET,
 // you must have READ access to the object.
-func (api gatewayAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 	var object, bucket string
 	vars := router.Vars(r)
 	bucket = vars["bucket"]
@@ -162,7 +162,7 @@ func (api gatewayAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Re
 // PutObjectHandler - PUT Object
 // ----------
 // This implementation of the PUT operation adds an object to a bucket.
-func (api gatewayAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -294,7 +294,7 @@ func (api gatewayAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Re
 // HeadObjectHandler - HEAD Object
 // -----------
 // The HEAD operation retrieves metadata from an object without returning the object itself.
-func (api gatewayAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 	var object, bucket string
 	vars := router.Vars(r)
 	bucket = vars["bucket"]
@@ -360,7 +360,7 @@ func (api gatewayAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.R
 }
 
 // DeleteMultipleObjectsHandler - deletes multiple objects.
-func (api gatewayAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := router.Vars(r)
 	bucket := vars["bucket"]
 
@@ -454,7 +454,7 @@ func (api gatewayAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter
 // -----------------
 // This implementation of the PUT operation uses the policy
 // subresource to add to or replace a policy on a bucket
-func (api gatewayAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -517,7 +517,7 @@ func (api gatewayAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *h
 // -----------------
 // This implementation of the DELETE operation uses the policy
 // subresource to add to remove a policy on a bucket.
-func (api gatewayAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -551,7 +551,7 @@ func (api gatewayAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r
 // -----------------
 // This operation uses the policy
 // subresource to return the policy of a specified bucket.
-func (api gatewayAPIHandlers) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -596,7 +596,7 @@ func (api gatewayAPIHandlers) GetBucketPolicyHandler(w http.ResponseWriter, r *h
 // notification configuration of a bucket. If notifications are
 // not enabled on the bucket, the operation returns an empty
 // NotificationConfiguration element.
-func (api gatewayAPIHandlers) GetBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) GetBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	writeErrorResponse(w, ErrNotImplemented, r.URL)
 }
 
@@ -608,19 +608,19 @@ func (api gatewayAPIHandlers) GetBucketNotificationHandler(w http.ResponseWriter
 // an event notification when it detects an event of the specified type.
 // By default, your bucket has no event notifications configured. That is,
 // the notification configuration will be an empty NotificationConfiguration.
-func (api gatewayAPIHandlers) PutBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) PutBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	writeErrorResponse(w, ErrNotImplemented, r.URL)
 }
 
 // ListenBucketNotificationHandler - list bucket notifications.
-func (api gatewayAPIHandlers) ListenBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) ListenBucketNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	writeErrorResponse(w, ErrNotImplemented, r.URL)
 }
 
 // PutBucketHandler - PUT Bucket
 // ----------
 // This implementation of the PUT operation creates a new bucket for authenticated request
-func (api gatewayAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -677,7 +677,7 @@ func (api gatewayAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Re
 }
 
 // DeleteBucketHandler - Delete bucket
-func (api gatewayAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL)
@@ -710,7 +710,7 @@ func (api gatewayAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http
 // of the objects in a bucket. You can use the request parameters as selection
 // criteria to return a subset of the objects in a bucket.
 //
-func (api gatewayAPIHandlers) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
 	vars := router.Vars(r)
 	bucket := vars["bucket"]
 
@@ -780,7 +780,7 @@ func (api gatewayAPIHandlers) ListObjectsV1Handler(w http.ResponseWriter, r *htt
 // The operation returns a 200 OK if the bucket exists and you
 // have permission to access it. Otherwise, the operation might
 // return responses such as 404 Not Found and 403 Forbidden.
-func (api gatewayAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 	vars := router.Vars(r)
 	bucket := vars["bucket"]
 
@@ -833,7 +833,7 @@ func (api gatewayAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.R
 // GetBucketLocationHandler - GET Bucket location.
 // -------------------------
 // This operation returns bucket location.
-func (api gatewayAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
+func (api *gatewayAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *http.Request) {
 	vars := router.Vars(r)
 	bucket := vars["bucket"]
 
