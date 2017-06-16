@@ -124,7 +124,7 @@ func (e *erasureInfo) AddCheckSumInfo(ckSumInfo checkSumInfo) {
 }
 
 // GetCheckSumInfo - get checksum of a part.
-func (e erasureInfo) GetCheckSumInfo(partName string) (ckSum checkSumInfo) {
+func (e *erasureInfo) GetCheckSumInfo(partName string) (ckSum checkSumInfo) {
 	// Return the checksum.
 	for _, sum := range e.Checksum {
 		if sum.Name == partName {
@@ -189,7 +189,7 @@ func newXLMetaV1(object string, dataBlocks, parityBlocks int) (xlMeta xlMetaV1) 
 
 // IsValid - tells if the format is sane by validating the version
 // string and format style.
-func (m xlMetaV1) IsValid() bool {
+func (m *xlMetaV1) IsValid() bool {
 	return isXLMetaValid(m.Version, m.Format)
 }
 
@@ -201,7 +201,7 @@ func isXLMetaValid(version, format string) bool {
 }
 
 // Converts metadata to object info.
-func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
+func (m *xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 	objInfo := ObjectInfo{
 		IsDir:           false,
 		Bucket:          bucket,
@@ -259,7 +259,7 @@ func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag strin
 }
 
 // ObjectToPartOffset - translate offset of an object to offset of its individual part.
-func (m xlMetaV1) ObjectToPartOffset(offset int64) (partIndex int, partOffset int64, err error) {
+func (m *xlMetaV1) ObjectToPartOffset(offset int64) (partIndex int, partOffset int64, err error) {
 	if offset == 0 {
 		// Special case - if offset is 0, then partIndex and partOffset are always 0.
 		return 0, 0, nil
@@ -296,7 +296,7 @@ func pickValidXLMeta(metaArr []xlMetaV1, modTime time.Time) (xlMetaV1, error) {
 var objMetadataOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errVolumeNotFound, errFileNotFound, errFileAccessDenied, errCorruptedFormat)
 
 // readXLMetaParts - returns the XL Metadata Parts from xl.json of one of the disks picked at random.
-func (xl xlObjects) readXLMetaParts(bucket, object string) (xlMetaParts []objectPartInfo, err error) {
+func (xl *xlObjects) readXLMetaParts(bucket, object string) (xlMetaParts []objectPartInfo, err error) {
 	var ignoredErrs []error
 	for _, disk := range xl.getLoadBalancedDisks() {
 		if disk == nil {
@@ -322,7 +322,7 @@ func (xl xlObjects) readXLMetaParts(bucket, object string) (xlMetaParts []object
 }
 
 // readXLMetaStat - return xlMetaV1.Stat and xlMetaV1.Meta from  one of the disks picked at random.
-func (xl xlObjects) readXLMetaStat(bucket, object string) (xlStat statInfo, xlMeta map[string]string, err error) {
+func (xl *xlObjects) readXLMetaStat(bucket, object string) (xlStat statInfo, xlMeta map[string]string, err error) {
 	var ignoredErrs []error
 	for _, disk := range xl.getLoadBalancedDisks() {
 		if disk == nil {
