@@ -65,7 +65,7 @@ type fsMetaV1 struct {
 
 // IsValid - tells if the format is sane by validating the version
 // string and format style.
-func (m fsMetaV1) IsValid() bool {
+func (m *fsMetaV1) IsValid() bool {
 	return isFSMetaValid(m.Version, m.Format)
 }
 
@@ -77,7 +77,7 @@ func isFSMetaValid(version, format string) bool {
 }
 
 // Converts metadata to object info.
-func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo {
+func (m *fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo {
 	if len(m.Meta) == 0 {
 		m.Meta = make(map[string]string)
 	}
@@ -119,7 +119,7 @@ func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo
 }
 
 // ObjectPartIndex - returns the index of matching object part number.
-func (m fsMetaV1) ObjectPartIndex(partNumber int) (partIndex int) {
+func (m *fsMetaV1) ObjectPartIndex(partNumber int) (partIndex int) {
 	for i, part := range m.Parts {
 		if partNumber == part.Number {
 			partIndex = i
