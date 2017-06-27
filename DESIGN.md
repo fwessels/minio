@@ -6,7 +6,7 @@ This document describes the high level software architecture of the Minio Object
 
 It is intended for developers who want to [contribute](https://github.com/minio/minio/blob/master/CONTRIBUTING.md) to the development of Minio as well as people generally interested  in the design of Minio.
 
-At its heart Minio is essentially a web server serving large binary blobs over HTTP that are either stored on disk (for put operations) or read from disk (for get operations).
+At its heart Minio is essentially a web server serving large binary blobs over HTTP that are either stored on disk (for put operations) or read from disk (for get operations). It is designed with scalability and simplicity in mind and has been developed from the ground up in Golang. 
 
 ## Code organization
 
@@ -30,7 +30,7 @@ The interface [`ObjectLayer`](https://github.com/minio/minio/blob/master/cmd/obj
 
 - [`fsObjects`](https://github.com/minio/minio/blob/master/cmd/fs-v1.go) 
 - [`xlObjects`](https://github.com/minio/minio/blob/master/cmd/xl-v1.go)
-- [`GatewayLayer`](https://github.com/minio/minio/blob/master/cmd/gateway-router.go) (see further down below)
+- [`GatewayLayer`](https://github.com/minio/minio/blob/master/cmd/gateway-router.go) _(see further down below)_
 
 The functionality of the `ObjectLayer` interface can be divided into the following categories:
 - bucket operations: `MakeBucketWithLocation()`, `GetBucketInfo()`, `ListBuckets()`, `DeleteBucket()`, and `ListObjects()`.
@@ -41,7 +41,7 @@ The functionality of the `ObjectLayer` interface can be divided into the followi
 
 ### `fsObjects`
 
-`fsObjects` is responsible for the implementation of the File System mode of operation of Minio. In this mode all contents that os stored under a single directory path are represented as an object store. A new `fsObjects` is created via `newFSObjectLayer()` taking a single directory path as argument.
+`fsObjects` is responsible for the implementation of the File System mode of operation of Minio. In this mode all content that is stored under a single directory path is represented as an object store. A new `fsObjects` is created via `newFSObjectLayer()` taking a single directory path as an argument.
 
 Buckets are top-level directories and new objects that are uploaded are stored as regular files under their respective path with which they are uploaded. Listing operations will list the local directory structure and return the results in batches. Multipart uploads construct the individual parts into a single concatenated file and move it in place once completed.
 
@@ -61,17 +61,17 @@ Information regarding the data and parity block configuration is also stored by 
 
 When doing basic file operations such a storing an object, it is split up into a number of data chunks. Parity chunks are computed (encoded) based on the data chunks and the data and parity blocks are then randomly distributed across the available `StorageAPI` objects.
 
-This configuration allows any combination of up to the number of parity chucks of either disks or servers to become inaccessible or damaged while still being able to reconstruct the contents of the original objects (and thus sent it back for Get operation). This is called the _read quorum_ that needs to be available for normal operation.
+This configuration allows any combination of up to the number of parity chucks of either disks or servers to become inaccessible or damaged while still being able to reconstruct the contents of the original objects (and thus return it back to clients for Get operation). This is called the _read quorum_ that needs to be available for normal operation.
 
-There is also a _write quorum_ which is one instance more than the read quorum, meaning that at the very minimum Minio can withstand failure of either a single disk or server (in practice it is almost always many more).
+There is also a _write quorum_ which is one instance more than the read quorum, and which is the absolutly minimum number of disks or servers to be operational in order to successfully complete write operations.
  
- In case the read or write quorum is not available for a specific object, appropriate error messages are returned. This means that, for instance, in case of not meeting the write quorum the client knows that an object has not been committed to disk.
+In case the read or write quorum is not available for a specific object, appropriate error messages are returned. This means that, for instance, in case of not meeting the write quorum the client knows that an object has not been committed to disk.
  
 #### Bitrot detection
 
 For each chunk that is written to disk, Minio will compute a hash value that is stored along side the data on disk. Upon re-reading the data back off the disk (which may be many years down the line), the hash will be recomputed and, in case of any differences to the original hash value, the chunk will be discarded.
  
- When a chunk is discarded, simple the next chunk in the `storageDisks` slice will be used instead meaning that, due to nature of the redundancy of Erasure Coding, no data loss has occured and the object can be returned in its original form (in virtually all cases).
+ When a chunk is discarded, simply the next chunk in the `storageDisks` slice will be used instead meaning that, due to nature of the redundancy of Erasure Coding, no data loss has occured and the object can be returned in its original form (in virtually all cases).
 
 ## Storage API
 
@@ -103,7 +103,7 @@ The interface [`GatewayLayer`](https://github.com/minio/minio/blob/master/cmd/ga
 
 - `gcsObjects`
 
-As compared to the `fsObjects` and `xlObjects` modes of operation of Minio whereby objects are written to local disk, the gateway mode of operation of Minio relies on a back-end store that can vary from Amazon S3 to Microsoft Azure or to Google Cloud Storage (with potentially others to follow in the future).
+In contrast to the `fsObjects` and `xlObjects` modes of Minio whereby objects are stored on local disk, the gateway mode of operation of Minio relies on a back-end store that can vary from Amazon S3 to Microsoft Azure or to Google Cloud Storage (with potentially others to follow in the future).
 
 __TODO__: describe `GatewayLayer`
 
@@ -117,22 +117,19 @@ __TODO__: describe `nsLockMap`,  `lockServer`, `minio/dsync`
 
 ## Admin API Handlers
 
-Minio server has a companion tool called [`mc`](https://github.com/minio/mc) (minio client for short) that allows some administrative tasks to be accompished. The interface [`adminCmdRunner`](https://github.com/minio/minio/blob/master/cmd/admin-rpc-client.go) plays a role in this. 
+Minio server has a companion tool called [`mc`](https://github.com/minio/mc) (minio client for short) that allows some administrative tasks to be accomplished. The interface [`adminCmdRunner`](https://github.com/minio/minio/blob/master/cmd/admin-rpc-client.go) is involved in this. 
 
-__TODO__: `adminAPIHandlers`
-
-__TODO__: `localAdminClient`
-
-__TODO__: `remoteAdminClient`
+__TODO__: `adminAPIHandlers`, `localAdminClient`,  `remoteAdminClient`
 
 ## Browser API Handlers
 
-Minio offers an integrated web server that makes it easy to view the contents that it stores using any internet browser (as long as there is a valid HTTP connection possible of course). The type `webAPIHandlers` is the main handler for the Web API:
+Minio offers an integrated web server that makes it easy to view the contents that it stores using any Internet browser. The type `webAPIHandlers` is the main handler for the Web API:
 - `ListObjects`, `ListBuckets`
 - `MakeBucket`
 - `PresignedGet`
+- and more
 
-__TODO__: describe 
+__TODO__: describe Web API
 
 ## Server startup & initialization
 
@@ -140,15 +137,15 @@ __TODO__: describe server start/initialisation of main components
 
 ## Layout on disk
 
-Minio has been designed with simplicitly in mind. This permeates not only to 'operational' simplicity (not needing config files, external dependencies, setup scripts, etc. in order to run Minio), but also to keeping the actual storage of objects as plain and simple as possible. Many years down the line people, without hypothetical access to (source code of) Minio itself, should be able to figure out how to reconstruct the data themselves.
+Minio has been designed with simplicitly in mind. This permeates not only to 'operational' simplicity (not needing config files, external dependencies, setup scripts, etc. in order to run Minio), but also to keeping the actual storage of objects as plain and simple as possible. Many years down the line, people, even without hypothetical access to (source code of) Minio itself, should be able to figure out how to reconstruct the data themselves.
 
-For the File System/`fsObjects` mode this is relatively trivial as it directly represents the underlying disk. More information can be found [here](https://github.com/minio/minio/tree/master/docs/backend/fs).
+For the File System/`fsObjects` mode this is pretty trivial as it directly represents the underlying disk. More information can be found [here](https://github.com/minio/minio/tree/master/docs/backend/fs).
 
 For the Erasure Coding/`xlObjects` mode, a simple directory and file structure is used in combination with JSON files that describe the properties (such as hash value and algorithm for bitrot protection) of the chunks that are written. In fact it should be entirely possible to read/reconstruct data outside of Minio server. Full details can be found [here](https://github.com/minio/minio/tree/master/docs/backend/xl).
  
-## What did we not discuss
+## What we did not discuss
 
-This document has focused on the most important design aspects of Minio but necessarily has not been able to cover 'all' topics. As such below is a non-conclusive list of topics that are not covered here (along with pointers in case there is additional documentation):
+This document has focused on the most important design aspects of Minio but necessarily has not been able to cover 'all' topics. As such below is an additional list of topics for further reading (along with pointers in case there is additional documentation):
 - bucket [notifications](https://github.com/minio/minio/tree/master/docs/bucket/notifications) and [policies](https://github.com/minio/minio/tree/master/docs/bucket/policy)
 - configuration data as stored in [config.json](https://github.com/minio/minio/tree/master/docs/config)
 - [shared](https://github.com/minio/minio/blob/master/docs/shared-backend/DESIGN.md) back-end mode 
