@@ -213,6 +213,12 @@ func (r ReadDiskDown) ReadFile(volume string, path string, offset int64, buf []b
 	return 0, errFaultyDisk
 }
 
+func (r ReadDiskDown) ReadFileWithVerify(volume string, path string, offset int64, buf []byte,
+	algo HashAlgo, expectedHash string) (n int64, err error) {
+
+	return 0, errFaultyDisk
+}
+
 func TestErasureReadFileDiskFail(t *testing.T) {
 	// Initialize environment needed for the test.
 	dataBlocks := 7
@@ -236,7 +242,7 @@ func TestErasureReadFileDiskFail(t *testing.T) {
 	}
 
 	// Create a test file to read from.
-	size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +325,7 @@ func TestErasureReadFileOffsetLength(t *testing.T) {
 	}
 
 	// Create a test file to read from.
-	size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +404,7 @@ func TestErasureReadFileRandomOffsetLength(t *testing.T) {
 	iterations := 10000
 
 	// Create a test file to read from.
-	size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, checkSums, err := erasureCreateFile(disks, "testbucket", "testobject", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}

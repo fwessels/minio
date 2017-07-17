@@ -39,10 +39,9 @@ import (
 
 // AWS Signature Version '4' constants.
 const (
-	signV4Algorithm     = "AWS4-HMAC-SHA256"
-	iso8601Format       = "20060102T150405Z"
-	yyyymmdd            = "20060102"
-	presignedHostHeader = "host"
+	signV4Algorithm = "AWS4-HMAC-SHA256"
+	iso8601Format   = "20060102T150405Z"
+	yyyymmdd        = "20060102"
 )
 
 // getCanonicalHeaders generate a list of request headers with their values
@@ -175,7 +174,7 @@ func doesPolicySignatureV4Match(formValues http.Header) APIErrorCode {
 	}
 
 	// Get signing key.
-	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, region)
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, sRegion)
 
 	// Get signature.
 	newSignature := getSignature(signingKey, formValues.Get("Policy"))

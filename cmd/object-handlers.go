@@ -260,7 +260,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 
 // Extract metadata relevant for an CopyObject operation based on conditional
 // header values specified in X-Amz-Metadata-Directive.
-func getCpObjMetadataFromHeader(header http.Header, defaultMeta map[string]string) map[string]string {
+func getCpObjMetadataFromHeader(header http.Header, defaultMeta map[string]string) (map[string]string, error) {
 	// if x-amz-metadata-directive says REPLACE then
 	// we extract metadata from the input headers.
 	if isMetadataReplace(header) {
@@ -270,11 +270,11 @@ func getCpObjMetadataFromHeader(header http.Header, defaultMeta map[string]strin
 	// if x-amz-metadata-directive says COPY then we
 	// return the default metadata.
 	if isMetadataCopy(header) {
-		return defaultMeta
+		return defaultMeta, nil
 	}
 
 	// Copy is default behavior if not x-amz-metadata-directive is set.
-	return defaultMeta
+	return defaultMeta, nil
 }
 
 // CopyObjectHandler - Copy Object
@@ -363,7 +363,11 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	// Make sure to remove saved etag, CopyObject calculates a new one.
 	delete(defaultMeta, "etag")
 
-	newMetadata := getCpObjMetadataFromHeader(r.Header, defaultMeta)
+	newMetadata, err := getCpObjMetadataFromHeader(r.Header, defaultMeta)
+	if err != nil {
+		errorIf(err, "found invalid http request header")
+		writeErrorResponse(w, ErrInternalError, r.URL)
+	}
 	// Check if x-amz-metadata-directive was not set to REPLACE and source,
 	// desination are same objects.
 	if !isMetadataReplace(r.Header) && cpSrcDstSame {
@@ -457,7 +461,12 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Extract metadata to be saved from incoming HTTP header.
-	metadata := extractMetadataFromHeader(r.Header)
+	metadata, err := extractMetadataFromHeader(r.Header)
+	if err != nil {
+		errorIf(err, "found invalid http request header")
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
 	if rAuthType == authTypeStreamingSigned {
 		if contentEncoding, ok := metadata["content-encoding"]; ok {
 			contentEncoding = trimAwsChunkedContentEncoding(contentEncoding)
@@ -507,7 +516,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		// Initialize stream signature verifier.
 		reader, s3Error := newSignV4ChunkedReader(r)
 		if s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
@@ -515,14 +524,14 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	case authTypeSignedV2, authTypePresignedV2:
 		s3Error := isReqAuthenticatedV2(r)
 		if s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
 		objInfo, err = objectAPI.PutObject(bucket, object, size, r.Body, metadata, sha256sum)
 	case authTypePresigned, authTypeSigned:
 		if s3Error := reqSignatureV4Verify(r, serverConfig.GetRegion()); s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
@@ -579,7 +588,12 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 
 	// Extract metadata that needs to be saved.
-	metadata := extractMetadataFromHeader(r.Header)
+	metadata, err := extractMetadataFromHeader(r.Header)
+	if err != nil {
+		errorIf(err, "found invalid http request header")
+		writeErrorResponse(w, ErrInternalError, r.URL)
+		return
+	}
 
 	uploadID, err := objectAPI.NewMultipartUpload(bucket, object, metadata)
 	if err != nil {
@@ -788,7 +802,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		// Initialize stream signature verifier.
 		reader, s3Error := newSignV4ChunkedReader(r)
 		if s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
@@ -796,14 +810,14 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	case authTypeSignedV2, authTypePresignedV2:
 		s3Error := isReqAuthenticatedV2(r)
 		if s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
 		partInfo, err = objectAPI.PutObjectPart(bucket, object, uploadID, partID, size, r.Body, incomingMD5, sha256sum)
 	case authTypePresigned, authTypeSigned:
 		if s3Error := reqSignatureV4Verify(r, serverConfig.GetRegion()); s3Error != ErrNone {
-			errorIf(errSignatureMismatch, dumpRequest(r))
+			errorIf(errSignatureMismatch, "%s", dumpRequest(r))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}

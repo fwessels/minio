@@ -115,6 +115,7 @@ const (
 	ErrBucketAlreadyOwnedByYou
 	ErrInvalidDuration
 	ErrNotSupported
+	ErrBucketAlreadyExists
 	// Add new error codes here.
 
 	// Bucket notification related errors.
@@ -149,6 +150,7 @@ const (
 	ErrAdminInvalidAccessKey
 	ErrAdminInvalidSecretKey
 	ErrAdminConfigNoQuorum
+	ErrInsecureClientRequest
 )
 
 // error code to APIError structure, these fields carry respective
@@ -230,7 +232,7 @@ var errorCodeResponse = map[APIErrorCode]APIError{
 		HTTPStatusCode: http.StatusInternalServerError,
 	},
 	ErrInvalidAccessKeyID: {
-		Code:           "InvalidAccessKeyID",
+		Code:           "InvalidAccessKeyId",
 		Description:    "The access key ID you provided does not exist in our records.",
 		HTTPStatusCode: http.StatusForbidden,
 	},
@@ -316,7 +318,7 @@ var errorCodeResponse = map[APIErrorCode]APIError{
 	},
 	ErrInvalidPart: {
 		Code:           "InvalidPart",
-		Description:    "One or more of the specified parts could not be found.",
+		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidPartOrder: {
@@ -352,6 +354,11 @@ var errorCodeResponse = map[APIErrorCode]APIError{
 	ErrBucketNotEmpty: {
 		Code:           "BucketNotEmpty",
 		Description:    "The bucket you tried to delete is not empty",
+		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrBucketAlreadyExists: {
+		Code:           "BucketAlreadyExists",
+		Description:    "The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.",
 		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrAllAccessDisabled: {
@@ -618,6 +625,11 @@ var errorCodeResponse = map[APIErrorCode]APIError{
 		Description:    "Configuration update failed because server quorum was not met",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
+	ErrInsecureClientRequest: {
+		Code:           "XMinioInsecureClientRequest",
+		Description:    "Cannot respond to plain-text request from TLS-encrypted server",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 
 	// Add your error structure here.
 }
@@ -657,6 +669,8 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrStorageFull
 	case BadDigest:
 		apiErr = ErrBadDigest
+	case AllAccessDisabled:
+		apiErr = ErrAllAccessDisabled
 	case IncompleteBody:
 		apiErr = ErrIncompleteBody
 	case ObjectExistsAsDirectory:
@@ -671,6 +685,8 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrBucketAlreadyOwnedByYou
 	case BucketNotEmpty:
 		apiErr = ErrBucketNotEmpty
+	case BucketAlreadyExists:
+		apiErr = ErrBucketAlreadyExists
 	case BucketExists:
 		apiErr = ErrBucketAlreadyOwnedByYou
 	case ObjectNotFound:
@@ -695,6 +711,8 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrNoSuchUpload
 	case PartTooSmall:
 		apiErr = ErrEntityTooSmall
+	case SignatureDoesNotMatch:
+		apiErr = ErrSignatureDoesNotMatch
 	case SHA256Mismatch:
 		apiErr = ErrContentSHA256Mismatch
 	case ObjectTooLarge:
@@ -707,6 +725,8 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrNotImplemented
 	case PolicyNotFound:
 		apiErr = ErrNoSuchBucketPolicy
+	case PartTooBig:
+		apiErr = ErrEntityTooLarge
 	default:
 		apiErr = ErrInternalError
 	}

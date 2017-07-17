@@ -18,6 +18,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"io/ioutil"
 	"os"
@@ -26,6 +28,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/minio/minio/pkg/disk"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 // creates a temp dir and sets up posix layer.
@@ -1017,6 +1023,115 @@ func TestPosixReadFile(t *testing.T) {
 	}
 }
 
+// TestPosixReadFileWithVerify - tests the posix level
+// ReadFileWithVerify API. Only tests hashing related
+// functionality. Other functionality is tested with
+// TestPosixReadFile.
+func TestPosixReadFileWithVerify(t *testing.T) {
+	// create posix test setup
+	posixStorage, path, err := newPosixTestSetup()
+	if err != nil {
+		t.Fatalf("Unable to create posix test setup, %s", err)
+	}
+	defer removeAll(path)
+
+	volume := "success-vol"
+	// Setup test environment.
+	if err = posixStorage.MakeVol(volume); err != nil {
+		t.Fatalf("Unable to create volume, %s", err)
+	}
+
+	blakeHash := func(s string) string {
+		k := blake2b.Sum512([]byte(s))
+		return hex.EncodeToString(k[:])
+	}
+
+	sha256Hash := func(s string) string {
+		k := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(k[:])
+	}
+
+	testCases := []struct {
+		fileName     string
+		offset       int64
+		bufSize      int
+		algo         HashAlgo
+		expectedHash string
+
+		expectedBuf []byte
+		expectedErr error
+	}{
+		// Hash verification is skipped with empty expected
+		// hash - 1
+		{
+			"myobject", 0, 5, HashBlake2b, "",
+			[]byte("Hello"), nil,
+		},
+		// Hash verification failure case - 2
+		{
+			"myobject", 0, 5, HashBlake2b, "a",
+			[]byte(""),
+			hashMismatchError{"a", blakeHash("Hello, world!")},
+		},
+		// Hash verification success with full content requested - 3
+		{
+			"myobject", 0, 13, HashBlake2b, blakeHash("Hello, world!"),
+			[]byte("Hello, world!"), nil,
+		},
+		// Hash verification success with full content and Sha256 - 4
+		{
+			"myobject", 0, 13, HashSha256, sha256Hash("Hello, world!"),
+			[]byte("Hello, world!"), nil,
+		},
+		// Hash verification success with partial content requested - 5
+		{
+			"myobject", 7, 4, HashBlake2b, blakeHash("Hello, world!"),
+			[]byte("worl"), nil,
+		},
+		// Hash verification success with partial content and Sha256 - 6
+		{
+			"myobject", 7, 4, HashSha256, sha256Hash("Hello, world!"),
+			[]byte("worl"), nil,
+		},
+		// Empty hash-algo returns error - 7
+		{
+			"myobject", 7, 4, "", blakeHash("Hello, world!"),
+			[]byte("worl"), errBitrotHashAlgoInvalid,
+		},
+		// Empty content hash verification with empty
+		// hash-algo algo returns error - 8
+		{
+			"myobject", 7, 0, "", blakeHash("Hello, world!"),
+			[]byte(""), errBitrotHashAlgoInvalid,
+		},
+	}
+
+	// Create file used in testcases
+	err = posixStorage.AppendFile(volume, "myobject", []byte("Hello, world!"))
+	if err != nil {
+		t.Fatalf("Failure in test setup: %v\n", err)
+	}
+
+	// Validate each test case.
+	for i, testCase := range testCases {
+		var n int64
+		// Common read buffer.
+		var buf = make([]byte, testCase.bufSize)
+		n, err = posixStorage.ReadFileWithVerify(volume, testCase.fileName, testCase.offset, buf, testCase.algo, testCase.expectedHash)
+
+		switch {
+		case err == nil && testCase.expectedErr != nil:
+			t.Errorf("Test %d: Expected error %v but got none.", i+1, testCase.expectedErr)
+		case err == nil && n != int64(testCase.bufSize):
+			t.Errorf("Test %d: %d bytes were expected, but %d were written", i+1, testCase.bufSize, n)
+		case err == nil && !bytes.Equal(testCase.expectedBuf, buf):
+			t.Errorf("Test %d: Expected bytes: %v, but got: %v", i+1, testCase.expectedBuf, buf)
+		case err != nil && err != testCase.expectedErr:
+			t.Errorf("Test %d: Expected error: %v, but got: %v", i+1, testCase.expectedErr, err)
+		}
+	}
+}
+
 // TestPosix posix.AppendFile()
 func TestPosixAppendFile(t *testing.T) {
 	// create posix test setup
@@ -1553,6 +1668,109 @@ func TestPosixStatFile(t *testing.T) {
 		}
 		if _, err := posixStorage.StatFile(testCase.srcVol, testCase.srcPath); err != testCase.expectedErr {
 			t.Fatalf("TestPosix case %d: Expected: \"%s\", got: \"%s\"", i+1, testCase.expectedErr, err)
+		}
+	}
+}
+
+// Checks for restrictions for min total disk space and inodes.
+func TestCheckDiskTotalMin(t *testing.T) {
+	testCases := []struct {
+		diskInfo disk.Info
+		err      error
+	}{
+		// Test 1 - when fstype is nfs.
+		{
+			diskInfo: disk.Info{
+				Total:  diskMinTotalSpace * 3,
+				FSType: "NFS",
+			},
+			err: nil,
+		},
+		// Test 2 - when fstype is xfs and total inodes are small.
+		{
+			diskInfo: disk.Info{
+				Total:  diskMinTotalSpace * 3,
+				FSType: "XFS",
+				Files:  9999,
+			},
+			err: errDiskFull,
+		},
+		// Test 3 - when fstype is btrfs and total inodes is empty.
+		{
+			diskInfo: disk.Info{
+				Total:  diskMinTotalSpace * 3,
+				FSType: "BTRFS",
+				Files:  0,
+			},
+			err: nil,
+		},
+		// Test 4 - when fstype is xfs and total disk space is really small.
+		{
+			diskInfo: disk.Info{
+				Total:  diskMinTotalSpace - diskMinTotalSpace/1024,
+				FSType: "XFS",
+				Files:  9999,
+			},
+			err: errDiskFull,
+		},
+	}
+
+	// Validate all cases.
+	for i, test := range testCases {
+		if err := checkDiskMinTotal(test.diskInfo); test.err != err {
+			t.Errorf("Test %d: Expected error %s, got %s", i+1, test.err, err)
+		}
+	}
+}
+
+// Checks for restrictions for min free disk space and inodes.
+func TestCheckDiskFreeMin(t *testing.T) {
+	testCases := []struct {
+		diskInfo disk.Info
+		err      error
+	}{
+		// Test 1 - when fstype is nfs.
+		{
+			diskInfo: disk.Info{
+				Free:   diskMinTotalSpace * 3,
+				FSType: "NFS",
+			},
+			err: nil,
+		},
+		// Test 2 - when fstype is xfs and total inodes are small.
+		{
+			diskInfo: disk.Info{
+				Free:   diskMinTotalSpace * 3,
+				FSType: "XFS",
+				Files:  9999,
+				Ffree:  9999,
+			},
+			err: errDiskFull,
+		},
+		// Test 3 - when fstype is btrfs and total inodes are empty.
+		{
+			diskInfo: disk.Info{
+				Free:   diskMinTotalSpace * 3,
+				FSType: "BTRFS",
+				Files:  0,
+			},
+			err: nil,
+		},
+		// Test 4 - when fstype is xfs and total disk space is really small.
+		{
+			diskInfo: disk.Info{
+				Free:   diskMinTotalSpace - diskMinTotalSpace/1024,
+				FSType: "XFS",
+				Files:  9999,
+			},
+			err: errDiskFull,
+		},
+	}
+
+	// Validate all cases.
+	for i, test := range testCases {
+		if err := checkDiskMinFree(test.diskInfo); test.err != err {
+			t.Errorf("Test %d: Expected error %s, got %s", i+1, test.err, err)
 		}
 	}
 }
