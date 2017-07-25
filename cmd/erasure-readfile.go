@@ -17,7 +17,7 @@
 package cmd
 
 import (
-	"errors"
+	_ "errors"
 	"io"
 	"sync"
 
@@ -323,21 +323,21 @@ func decodeData(enBlocks [][]byte, dataBlocks, parityBlocks int) error {
 	}
 
 	// Reconstruct encoded blocks.
-	err = rs.Reconstruct(enBlocks)
+	err = rs.ReconstructData(enBlocks)
 	if err != nil {
 		return traceError(err)
 	}
 
-	// Verify reconstructed blocks (parity).
-	ok, err := rs.Verify(enBlocks)
-	if err != nil {
-		return traceError(err)
-	}
-	if !ok {
-		// Blocks cannot be reconstructed, corrupted data.
-		err = errors.New("Verification failed after reconstruction, data likely corrupted")
-		return traceError(err)
-	}
+	//// Verify reconstructed blocks (parity).
+	//ok, err := rs.Verify(enBlocks)
+	//if err != nil {
+	//	return traceError(err)
+	//}
+	//if !ok {
+	//	// Blocks cannot be reconstructed, corrupted data.
+	//	err = errors.New("Verification failed after reconstruction, data likely corrupted")
+	//	return traceError(err)
+	//}
 
 	// Success.
 	return nil

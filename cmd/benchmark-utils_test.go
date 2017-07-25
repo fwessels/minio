@@ -51,8 +51,10 @@ func runPutObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 	metadata := make(map[string]string)
 	metadata["etag"] = getMD5Hash(textData)
 	sha256sum := ""
+
+	b.SetBytes(int64(len(textData)))
 	// benchmark utility which helps obtain number of allocations and bytes allocated per ops.
-	b.ReportAllocs()
+	// b.ReportAllocs()
 	// the actual benchmark for PutObject starts here. Reset the benchmark timer.
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -224,8 +226,9 @@ func runGetObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 		}
 	}
 
+	b.SetBytes(int64(objSize))
 	// benchmark utility which helps obtain number of allocations and bytes allocated per ops.
-	b.ReportAllocs()
+	// b.ReportAllocs()
 	// the actual benchmark for GetObject starts here. Reset the benchmark timer.
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

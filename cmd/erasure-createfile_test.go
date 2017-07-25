@@ -23,6 +23,7 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/klauspost/reedsolomon"
+	"fmt"
 )
 
 // Simulates a faulty disk for AppendFile()
@@ -201,4 +202,98 @@ func TestErasureEncode(t *testing.T) {
 			}
 		}
 	}
+}
+
+func benchmarkErasureCreateFileParallel(b *testing.B) {
+
+}
+
+func benchmarkErasureCreateFile(b *testing.B, dataBlocks, parityBlocks int, objsize int, status string) {
+	// Initialize environment needed for the test.
+	blockSize := int64(blockSizeV1)
+	setup, err := newErasureTestSetup(dataBlocks, parityBlocks, blockSize)
+	if err != nil {
+		//t.Error(err)
+		return
+	}
+	defer setup.Remove()
+
+	disks := setup.disks
+
+	data := make([]byte, objsize)
+	_, err = rand.Read(data)
+	if err != nil {
+		//t.Fatal(err)
+	}
+
+	// Take disks offline
+	for i, c := range status {
+		if c == '0' {
+			disks[i] = nil
+		}
+	}
+
+	b.SetBytes(int64(len(data)))
+	// benchmark utility which helps obtain number of allocations and bytes allocated per ops.
+	// b.ReportAllocs()
+	// the actual benchmark for GetObject starts here. Reset the benchmark timer.
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Test when all disks are up.
+		_, size, _, err := erasureCreateFile(disks, "testbucket", fmt.Sprintf("testobject%d", i), bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+		if err != nil {
+			//t.Fatal(err)
+		}
+		if size != int64(len(data)) {
+			//t.Errorf("erasureCreateFile returned %d, expected %d", size, len(data))
+		}
+	}
+}
+
+func BenchmarkErasureCreateFile1Mb_4x4(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 1*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile5Mb_2x2(b *testing.B) {
+	benchmarkErasureCreateFile(b, 2, 2, 5*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4_11110000(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "11110000")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4_01111000(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "01111000")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4_00111100(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "00111100")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4_00011110(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "00011110")
+}
+
+func BenchmarkErasureCreateFile5Mb_4x4_00001111(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 5*humanize.MiByte, "00001111")
+}
+
+func BenchmarkErasureCreateFile5Mb_6x6(b *testing.B) {
+	benchmarkErasureCreateFile(b, 6, 6, 5*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile5Mb_8x8(b *testing.B) {
+	benchmarkErasureCreateFile(b, 8, 8, 5*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile10Mb_4x4(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 10*humanize.MiByte, "")
+}
+
+func BenchmarkErasureCreateFile25Mb_4x4(b *testing.B) {
+	benchmarkErasureCreateFile(b, 4, 4, 25*humanize.MiByte, "")
 }
