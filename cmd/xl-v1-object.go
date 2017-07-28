@@ -571,12 +571,12 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 		// when size == -1 because in this case, we are not able to predict how many parts we will have.
 		allowEmptyPart := partIdx == 1
 
-		var partSizeWritten int64
+		var partSizeWritten, partCompressedSize int64
 		var checkSums []string
 		var erasureErr error
 
 		// Erasure code data and write across all disks.
-		onlineDisks, partSizeWritten, checkSums, erasureErr = erasureCreateFile(onlineDisks, minioMetaTmpBucket, tempErasureObj, partReader, allowEmptyPart, partsMetadata[0].Erasure.BlockSize, partsMetadata[0].Erasure.DataBlocks, partsMetadata[0].Erasure.ParityBlocks, bitRotAlgo, xl.writeQuorum)
+		onlineDisks, partSizeWritten, partCompressedSize, checkSums, erasureErr = erasureCreateFile(onlineDisks, minioMetaTmpBucket, tempErasureObj, partReader, allowEmptyPart, partsMetadata[0].Erasure.BlockSize, partsMetadata[0].Erasure.DataBlocks, partsMetadata[0].Erasure.ParityBlocks, bitRotAlgo, xl.writeQuorum)
 		if erasureErr != nil {
 			return ObjectInfo{}, toObjectErr(erasureErr, minioMetaTmpBucket, tempErasureObj)
 		}
@@ -594,7 +594,7 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 		if partSizeWritten > 0 || allowEmptyPart {
 			for index := range partsMetadata {
 				// Add the part to xl.json.
-				partsMetadata[index].AddObjectPart(partIdx, partName, "", partSizeWritten)
+				partsMetadata[index].AddObjectPart(partIdx, partName, "", partSizeWritten, partCompressedSize)
 				// Add part checksum info to xl.json.
 				partsMetadata[index].Erasure.AddCheckSumInfo(checkSumInfo{
 					Name:      partName,

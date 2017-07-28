@@ -30,7 +30,7 @@ import (
 // all the disks, writes also calculate individual block's checksum
 // for future bit-rot protection.
 func erasureCreateFile(disks []StorageAPI, volume, path string, reader io.Reader, allowEmpty bool, blockSize int64,
-	dataBlocks, parityBlocks int, algo HashAlgo, writeQuorum int) (newDisks []StorageAPI, bytesWritten int64, checkSums []string, err error) {
+	dataBlocks, parityBlocks int, algo HashAlgo, writeQuorum int) (newDisks []StorageAPI, bytesWritten, compressedSize int64, checkSums []string, err error) {
 
 	// Allocated blockSized buffer for reading from incoming stream.
 	buf := make([]byte, blockSize)
@@ -44,7 +44,7 @@ func erasureCreateFile(disks []StorageAPI, volume, path string, reader io.Reader
 		// FIXME: this is a bug in Golang, n == 0 and err ==
 		// io.ErrUnexpectedEOF for io.ReadFull function.
 		if n == 0 && rErr == io.ErrUnexpectedEOF {
-			return nil, 0, nil, traceError(rErr)
+			return nil, 0, 0, nil, traceError(rErr)
 		}
 		if rErr == io.EOF {
 			// We have reached EOF on the first byte read, io.Reader
@@ -54,28 +54,30 @@ func erasureCreateFile(disks []StorageAPI, volume, path string, reader io.Reader
 				blocks = make([][]byte, len(disks))
 				newDisks, rErr = appendFile(disks, volume, path, blocks, hashWriters, writeQuorum)
 				if rErr != nil {
-					return nil, 0, nil, rErr
+					return nil, 0, 0, nil, rErr
 				}
 			} // else we have reached EOF after few reads, no need to
 			// add an additional 0bytes at the end.
 			break
 		}
 		if rErr != nil && rErr != io.ErrUnexpectedEOF {
-			return nil, 0, nil, traceError(rErr)
+			return nil, 0, 0, nil, traceError(rErr)
 		}
 		if n > 0 {
 			// Returns encoded blocks.
+			var compressed int64
 			var enErr error
-			blocks, enErr = encodeData(buf[0:n], dataBlocks, parityBlocks)
+			blocks, compressed, enErr = encodeData(buf[0:n], dataBlocks, parityBlocks)
 			if enErr != nil {
-				return nil, 0, nil, enErr
+				return nil, 0, 0, nil, enErr
 			}
 
 			// Write to all disks.
 			if newDisks, err = appendFile(disks, volume, path, blocks, hashWriters, writeQuorum); err != nil {
-				return nil, 0, nil, err
+				return nil, 0, 0, nil, err
 			}
 			bytesWritten += int64(n)
+			compressedSize += compressed
 		}
 	}
 
@@ -83,15 +85,15 @@ func erasureCreateFile(disks []StorageAPI, volume, path string, reader io.Reader
 	for i := range checkSums {
 		checkSums[i] = hex.EncodeToString(hashWriters[i].Sum(nil))
 	}
-	return newDisks, bytesWritten, checkSums, nil
+	return newDisks, bytesWritten, compressedSize, checkSums, nil
 }
 
 // encodeData - encodes incoming data buffer into
 // dataBlocks+parityBlocks returns a 2 dimensional byte array.
-func encodeData(dataBuffer []byte, dataBlocks, parityBlocks int) ([][]byte, error) {
+func encodeData(dataBuffer []byte, dataBlocks, parityBlocks int) ([][]byte, int64, error) {
 	rs, err := reedsolomon.New(dataBlocks, parityBlocks)
 	if err != nil {
-		return nil, traceError(err)
+		return nil, 0, traceError(err)
 	}
 
 	snappied := make([]byte, snappy.MaxEncodedLen(len(dataBuffer)))
@@ -101,17 +103,17 @@ func encodeData(dataBuffer []byte, dataBlocks, parityBlocks int) ([][]byte, erro
 	var blocks [][]byte
 	blocks, err = rs.Split(snappied)
 	if err != nil {
-		return nil, traceError(err)
+		return nil, 0, traceError(err)
 	}
 
 	// Encode parity blocks using data blocks.
 	err = rs.Encode(blocks)
 	if err != nil {
-		return nil, traceError(err)
+		return nil, 0, traceError(err)
 	}
 
 	// Return encoded blocks.
-	return blocks, nil
+	return blocks, int64(dataBlocks*len(blocks[0])), nil
 }
 
 // appendFile - append data buffer at path.
