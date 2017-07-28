@@ -21,6 +21,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/golang/snappy"
 	"github.com/klauspost/reedsolomon"
 	"github.com/minio/minio/pkg/bpool"
 )
@@ -234,7 +235,7 @@ func erasureReadFile(writer io.Writer, disks []StorageAPI, volume, path string,
 			// For ex. if totalLength is 15M and blockSize is 10MB, curBlockSize for
 			// the last block should be 5MB.
 			curBlockSize = totalLength % blockSize
-			curChunkSize = getChunkSize(curBlockSize, dataBlocks)
+			curChunkSize = getChunkSize(186314*2 /*curBlockSize*/, dataBlocks)
 		}
 
 		// NOTE: That for the offset calculation we have to use chunkSize and
@@ -270,7 +271,7 @@ func erasureReadFile(writer io.Writer, disks []StorageAPI, volume, path string,
 		}
 
 		// If we have all the data blocks no need to decode, continue to write.
-		if !isSuccessDataBlocks(enBlocks, dataBlocks) {
+		if true /*!isSuccessDataBlocks(enBlocks, dataBlocks)*/ {
 			// Reconstruct the missing data blocks.
 			if err := decodeData(enBlocks, dataBlocks, parityBlocks); err != nil {
 				return bytesWritten, err
@@ -328,6 +329,29 @@ func decodeData(enBlocks [][]byte, dataBlocks, parityBlocks int) error {
 		return traceError(err)
 	}
 
+	// Concatenate compressed data shards into a single block
+	shardSize := len(enBlocks[0])
+	snappied := make([]byte, dataBlocks * shardSize)
+	for i := 0; i < dataBlocks; i++ {
+		copy(snappied[i*shardSize:(i+1)*shardSize], enBlocks[i])
+	}
+
+	// Decompress our data
+	desnappied, err := snappy.Decode(nil, snappied)
+	if err != nil {
+		return traceError(err)
+	}
+
+	// Replace compressed data shards with uncompressed data shards
+	desnappiedPartSize := (len(desnappied) + dataBlocks - 1) / dataBlocks
+	for i := 0; i < dataBlocks; i++ {
+		enBlocks[i] = make([]byte, desnappiedPartSize)
+		end := (i+1)*desnappiedPartSize
+		if end > len(desnappied) {
+			end = len(desnappied)
+		}
+		copy(enBlocks[i], desnappied[i*desnappiedPartSize:end])
+	}
 	//// Verify reconstructed blocks (parity).
 	//ok, err := rs.Verify(enBlocks)
 	//if err != nil {

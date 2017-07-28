@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/reedsolomon"
+	"github.com/golang/snappy"
 )
 
 // erasureCreateFile - writes an entire stream by erasure coding to
@@ -92,9 +93,13 @@ func encodeData(dataBuffer []byte, dataBlocks, parityBlocks int) ([][]byte, erro
 	if err != nil {
 		return nil, traceError(err)
 	}
+
+	snappied := make([]byte, snappy.MaxEncodedLen(len(dataBuffer)))
+	snappied = snappy.Encode(snappied, dataBuffer)
+
 	// Split the input buffer into data and parity blocks.
 	var blocks [][]byte
-	blocks, err = rs.Split(dataBuffer)
+	blocks, err = rs.Split(snappied)
 	if err != nil {
 		return nil, traceError(err)
 	}
