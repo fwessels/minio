@@ -453,8 +453,8 @@ func benchmarkErasureReadFile(b *testing.B, dataBlocks, parityBlocks int, blockS
 
 	disks := setup.disks
 
-	// Prepare a slice of 5humanize.MiByte with random data.
-	data := make([]byte, 5*humanize.MiByte)
+	// Prepare a slice with random data.
+	data := make([]byte, blockSize)
 	length := int64(len(data))
 	_, err = rand.Read(data)
 	if err != nil {
