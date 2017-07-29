@@ -261,10 +261,10 @@ func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag strin
 }
 
 // ObjectToPartOffset - translate offset of an object to offset of its individual part.
-func (m xlMetaV1) ObjectToPartOffset(offset int64) (partIndex int, partOffset int64, err error) {
+func (m xlMetaV1) ObjectToPartOffset(offset int64) (partIndex int, partOffset, partCompressedSize int64, err error) {
 	if offset == 0 {
 		// Special case - if offset is 0, then partIndex and partOffset are always 0.
-		return 0, 0, nil
+		return 0, 0, m.Parts[0].Compressed, nil
 	}
 	partOffset = offset
 	// Seek until object offset maps to a particular part offset.
@@ -272,13 +272,13 @@ func (m xlMetaV1) ObjectToPartOffset(offset int64) (partIndex int, partOffset in
 		partIndex = i
 		// Offset is smaller than size we have reached the proper part offset.
 		if partOffset < part.Size {
-			return partIndex, partOffset, nil
+			return partIndex, partOffset, part.Compressed, nil
 		}
 		// Continue to towards the next part.
 		partOffset -= part.Size
 	}
 	// Offset beyond the size of the object return InvalidRange.
-	return 0, 0, traceError(InvalidRange{})
+	return 0, 0, 0, traceError(InvalidRange{})
 }
 
 // pickValidXLMeta - picks one valid xlMeta content and returns from a

@@ -181,7 +181,7 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 	}
 
 	// Get start part index and offset.
-	partIndex, partOffset, err := xlMeta.ObjectToPartOffset(startOffset)
+	partIndex, partOffset, partCompressedSize, err := xlMeta.ObjectToPartOffset(startOffset)
 	if err != nil {
 		return traceError(InvalidRange{startOffset, length, xlMeta.Stat.Size})
 	}
@@ -193,7 +193,7 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 	}
 
 	// Get last part index to read given length.
-	lastPartIndex, _, err := xlMeta.ObjectToPartOffset(endOffset)
+	lastPartIndex, _, _, err := xlMeta.ObjectToPartOffset(endOffset)
 	if err != nil {
 		return traceError(InvalidRange{startOffset, length, xlMeta.Stat.Size})
 	}
@@ -284,7 +284,7 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 		}
 
 		// Start erasure decoding and writing to the client.
-		n, err := erasureReadFile(mw, onlineDisks, bucket, pathJoin(object, partName), partOffset, readSize, partSize, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, checkSums, ckSumAlgo, pool)
+		n, err := erasureReadFile(mw, onlineDisks, bucket, pathJoin(object, partName), partOffset, readSize, partSize, partCompressedSize, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, checkSums, ckSumAlgo, pool)
 		if err != nil {
 			errorIf(err, "Unable to read %s of the object `%s/%s`.", partName, bucket, object)
 			return toObjectErr(err, bucket, object)

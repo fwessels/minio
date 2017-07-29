@@ -191,6 +191,7 @@ func parseXLParts(xlMetaBuf []byte) []objectPartInfo {
 		info.Name = p.Get("name").String()
 		info.ETag = p.Get("etag").String()
 		info.Size = p.Get("size").Int()
+		info.Compressed = p.Get("compressed").Int()
 		partInfo[i] = info
 	}
 	return partInfo
