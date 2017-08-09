@@ -57,7 +57,7 @@ func TestErasureCreateFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Test when all disks are up.
-	_, size, _, err := erasureCreateFile(disks, "testbucket", "testobject1", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, _, _, err := erasureCreateFile(disks, "testbucket", "testobject1", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestErasureCreateFile(t *testing.T) {
 	disks[5] = AppendDiskDown{disks[5].(*posix)}
 
 	// Test when two disks are down.
-	_, size, _, err = erasureCreateFile(disks, "testbucket", "testobject2", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, _, _, err = erasureCreateFile(disks, "testbucket", "testobject2", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestErasureCreateFile(t *testing.T) {
 	disks[8] = AppendDiskDown{disks[8].(*posix)}
 	disks[9] = AppendDiskDown{disks[9].(*posix)}
 
-	_, size, _, err = erasureCreateFile(disks, "testbucket", "testobject3", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, size, _, _, err = erasureCreateFile(disks, "testbucket", "testobject3", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestErasureCreateFile(t *testing.T) {
 
 	// 1 more disk down. 7 disk down in total. Should return quorum error.
 	disks[10] = AppendDiskDown{disks[10].(*posix)}
-	_, _, _, err = erasureCreateFile(disks, "testbucket", "testobject4", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+	_, _, _, _, err = erasureCreateFile(disks, "testbucket", "testobject4", bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 	if errorCause(err) != errXLWriteQuorum {
 		t.Errorf("erasureCreateFile return value: expected errXLWriteQuorum, got %s", err)
 	}
@@ -188,7 +188,7 @@ func TestErasureEncode(t *testing.T) {
 
 	// Test encode cases.
 	for i, testCase := range testEncodeCases {
-		_, actualErr := encodeData(testCase.inputData, testCase.inputDataBlocks, testCase.inputParityBlocks)
+		_, _, actualErr := encodeData(testCase.inputData, testCase.inputDataBlocks, testCase.inputParityBlocks)
 		if actualErr != nil && testCase.shouldPass {
 			t.Errorf("Test %d: Expected to pass but failed instead with \"%s\"", i+1, actualErr)
 		}
@@ -240,7 +240,7 @@ func benchmarkErasureCreateFile(b *testing.B, dataBlocks, parityBlocks int, objs
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Test when all disks are up.
-		_, size, _, err := erasureCreateFile(disks, "testbucket", fmt.Sprintf("testobject%d", i), bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
+		_, size, _, _, err := erasureCreateFile(disks, "testbucket", fmt.Sprintf("testobject%d", i), bytes.NewReader(data), true, blockSize, dataBlocks, parityBlocks, bitRotAlgo, dataBlocks+1)
 		if err != nil {
 			//t.Fatal(err)
 		}

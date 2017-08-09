@@ -1,0 +1,9 @@
+$ go test -v -run=XXX -bench=BenchmarkErasureReadFile
+BenchmarkErasureReadFile10Kb_2x2-8    	   20000	     66723 ns/op	 153.47 MB/s
+BenchmarkErasureReadFile100Kb_2x2-8   	   10000	    184318 ns/op	 555.56 MB/s
+BenchmarkErasureReadFile500Kb_2x2-8   	    2000	    732481 ns/op	 698.99 MB/s
+BenchmarkErasureReadFile1Mb_2x2-8     	    1000	   1424385 ns/op	 736.16 MB/s
+BenchmarkErasureReadFile5Mb_2x2-8     	     200	   8245756 ns/op	 635.83 MB/s
+BenchmarkErasureReadFile10Mb_2x2-8    	     100	  15205158 ns/op	 689.62 MB/s
+BenchmarkErasureReadFile25Mb_2x2-8    	      50	  30736975 ns/op	 852.86 MB/s
+BenchmarkErasureReadFile50Mb_2x2-8    	      20	 105801938 ns/op	 495.54 MB/s

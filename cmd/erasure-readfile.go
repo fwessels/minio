@@ -235,6 +235,7 @@ func erasureReadFile(writer io.Writer, disks []StorageAPI, volume, path string,
 			// For ex. if totalLength is 15M and blockSize is 10MB, curBlockSize for
 			// the last block should be 5MB.
 			curBlockSize = totalLength % blockSize
+			// will not work for blocks > 1
 			curChunkSize = getChunkSize(compressedSize, dataBlocks)
 		}
 

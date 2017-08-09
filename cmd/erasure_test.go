@@ -23,7 +23,7 @@ import (
 
 // mustEncodeData - encodes data slice and provides encoded 2 dimensional slice.
 func mustEncodeData(data []byte, dataBlocks, parityBlocks int) [][]byte {
-	encodedData, err := encodeData(data, dataBlocks, parityBlocks)
+	encodedData, _, err := encodeData(data, dataBlocks, parityBlocks)
 	if err != nil {
 		// Upon failure panic this function.
 		panic(err)
