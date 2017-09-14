@@ -850,8 +850,7 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 		}, nil
 	}
 
-	heal := false // true only for xl.ListObjectsHeal()
-	walkResultCh, endWalkCh := fs.listPool.Release(listParams{bucket, recursive, marker, prefix, heal})
+	walkResultCh, endWalkCh := fs.listPool.Release(listParams{bucket: bucket, recursive: recursive, marker: marker, prefix: prefix})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := func(bucket, object string) bool {
@@ -899,7 +898,7 @@ func (fs fsObjects) ListObjects(bucket, prefix, marker, delimiter string, maxKey
 	}
 
 	// Save list routine for the next marker if we haven't reached EOF.
-	params := listParams{bucket, recursive, nextMarker, prefix, heal}
+	params := listParams{bucket: bucket, recursive: recursive, marker: nextMarker, prefix: prefix}
 	if !eof {
 		fs.listPool.Set(params, walkResultCh, endWalkCh)
 	}
