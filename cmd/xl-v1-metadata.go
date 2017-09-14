@@ -374,9 +374,9 @@ func pickValidXLMeta(metaArr []xlMetaV1, modTime time.Time) (xmv xlMetaV1, e err
 var objMetadataOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errVolumeNotFound, errFileNotFound, errFileAccessDenied, errCorruptedFormat)
 
 // readXLMetaParts - returns the XL Metadata Parts from xl.json of one of the disks picked at random.
-func (xl xlObjects) readXLMetaParts(bucket, object string) (xlMetaParts []objectPartInfo, err error) {
+func (xl xlObjects) readXLMetaParts(bucketSlot *BucketSlot, bucket, object string) (xlMetaParts []objectPartInfo, err error) {
 	var ignoredErrs []error
-	for _, disk := range xl.getLoadBalancedDisks() {
+	for _, disk := range bucketSlot.getLoadBalancedDisks() {
 		if disk == nil {
 			ignoredErrs = append(ignoredErrs, errDiskNotFound)
 			continue
@@ -396,13 +396,17 @@ func (xl xlObjects) readXLMetaParts(bucket, object string) (xlMetaParts []object
 	}
 	// If all errors were ignored, reduce to maximal occurrence
 	// based on the read quorum.
-	return nil, reduceReadQuorumErrs(ignoredErrs, nil, xl.readQuorum)
+	return nil, reduceReadQuorumErrs(ignoredErrs, nil, bucketSlot.readQuorum)
 }
 
-// readXLMetaStat - return xlMetaV1.Stat and xlMetaV1.Meta from  one of the disks picked at random.
+// readXLMetaStat - return xlMetaV1.Stat and xlMetaV1.Meta from one of the disks picked at random.
 func (xl xlObjects) readXLMetaStat(bucket, object string) (xlStat statInfo, xlMeta map[string]string, err error) {
 	var ignoredErrs []error
-	for _, disk := range xl.getLoadBalancedDisks() {
+	bucketSlot, err := xl.getReadableSlot(bucket, object)
+	if err != nil {
+		return statInfo{}, nil, err
+	}
+	for _, disk := range bucketSlot.getLoadBalancedDisks() {
 		if disk == nil {
 			ignoredErrs = append(ignoredErrs, errDiskNotFound)
 			continue
@@ -423,7 +427,7 @@ func (xl xlObjects) readXLMetaStat(bucket, object string) (xlStat statInfo, xlMe
 	}
 	// If all errors were ignored, reduce to maximal occurrence
 	// based on the read quorum.
-	return statInfo{}, nil, reduceReadQuorumErrs(ignoredErrs, nil, xl.readQuorum)
+	return statInfo{}, nil, reduceReadQuorumErrs(ignoredErrs, nil, bucketSlot.readQuorum)
 }
 
 // deleteXLMetadata - deletes `xl.json` on a single disk.
