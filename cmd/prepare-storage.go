@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"sync"
 
 	"github.com/minio/mc/pkg/console"
 )
@@ -331,26 +332,48 @@ func waitForFormatXLDisks(firstDisk bool, endpoints EndpointList, storageDisks [
 		return nil, errInvalidArgument
 	}
 
-	// Retryable disks before formatting, we need to have a larger
-	// retry window so that we wait enough amount of time before
-	// the disks come online.
-	retryDisks := make([]StorageAPI, len(storageDisks))
-	for i, storage := range storageDisks {
-		retryDisks[i] = &retryStorage{
-			remoteStorage:    storage,
-			maxRetryAttempts: globalStorageInitRetryThreshold,
-			retryUnit:        time.Second,
-			retryCap:         time.Second * 30, // 30 seconds.
-			offlineTimestamp: UTCNow(),
-		}
+	// Initialize sync waitgroup.
+	var wg = &sync.WaitGroup{}
+
+	// Initialize list of errors.
+	var dErrs = make([]error, getBucketSlots([]StorageAPI{}))
+
+	for slot := 0; slot < getBucketSlots([]StorageAPI{}); slot++ {
+		wg.Add(1)
+
+		go func(slot int) {
+			defer wg.Done()
+
+			endpointsCanonical := EndpointList{}
+
+			// Retryable disks before formatting, we need to have a larger
+			// retry window so that we wait enough amount of time before
+			// the disks come online.
+			retryDisks := make([]StorageAPI, len(storageDisks) / getBucketSlots([]StorageAPI{}))
+			for i, storage := range storageDisks {
+				if i % getBucketSlots([]StorageAPI{}) == slot {
+					retryDisks[i / getBucketSlots([]StorageAPI{})] = &retryStorage{
+						remoteStorage:    storage,
+						maxRetryAttempts: globalStorageInitRetryThreshold,
+						retryUnit:        time.Second,
+						retryCap:         time.Second * 30, // 30 seconds.
+						offlineTimestamp: UTCNow(),
+					}
+					endpointsCanonical = append(endpointsCanonical, endpoints[i])
+				}
+			}
+
+			// Start retry loop retrying until disks are formatted properly, until we have reached
+			// a conditional quorum of formatted disks.
+			err = retryFormattingXLDisks(firstDisk, endpointsCanonical, retryDisks)
+			if err != nil {
+				dErrs[slot] = err
+			}
+		}(slot)
 	}
 
-	// Start retry loop retrying until disks are formatted properly, until we have reached
-	// a conditional quorum of formatted disks.
-	err = retryFormattingXLDisks(firstDisk, endpoints, retryDisks)
-	if err != nil {
-		return nil, err
-	}
+	// Wait for all make volumes to finish.
+	wg.Wait()
 
 	// Initialize the disk into a formatted disks wrapper.
 	formattedDisks = make([]StorageAPI, len(storageDisks))
