@@ -50,7 +50,7 @@ type authConfig struct {
 	retryAttemptThreshold int
 }
 
-// AuthRPCClient is a authenticated RPC client which does authentication before doing Call().
+// AuthRPCClient is an authenticated RPC client which does authentication before doing Call().
 type AuthRPCClient struct {
 	sync.RWMutex            // Mutex to lock this object.
 	rpcClient    *RPCClient // Reconnectable RPC client to make any RPC call.
