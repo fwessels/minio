@@ -173,7 +173,13 @@ func serverMain(ctx *cli.Context) {
 
 	// Set nodes for dsync for distributed setup.
 	if globalIsDistXL {
-		clnts, myNode := newDsyncNodes(globalEndpoints)
+		dsyncEndpoints := EndpointList{}
+		for i, ep := range globalEndpoints {
+			if i % getBucketSlots([]StorageAPI{}) == 0 {
+				dsyncEndpoints = append(dsyncEndpoints, ep)
+			}
+		}
+		clnts, myNode := newDsyncNodes(dsyncEndpoints)
 		fatalIf(dsync.Init(clnts, myNode), "Unable to initialize distributed locking clients")
 	}
 
