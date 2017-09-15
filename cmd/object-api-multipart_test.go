@@ -127,7 +127,7 @@ func testObjectAbortMultipartUpload(obj ObjectLayer, instanceType string, t Test
 	}
 }
 
-// Wrapper for calling isUploadIDExists tests for both XL multiple disks and single node setup.
+// Wrapper for calling doesUploadIDExist tests for both XL multiple disks and single node setup.
 func TestObjectAPIIsUploadIDExists(t *testing.T) {
 	ExecObjectLayerTest(t, testObjectAPIIsUploadIDExists)
 }
@@ -137,7 +137,7 @@ func testObjectAPIIsUploadIDExists(obj ObjectLayer, instanceType string, t TestE
 	bucket := "minio-bucket"
 	object := "minio-object"
 
-	// Create bucket before intiating NewMultipartUpload.
+	// Create bucket before initiating NewMultipartUpload.
 	err := obj.MakeBucketWithLocation(bucket, "")
 	if err != nil {
 		// Failed to create newbucket, abort.
