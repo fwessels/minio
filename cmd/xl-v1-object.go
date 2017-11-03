@@ -153,6 +153,18 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 		return traceError(errUnexpected)
 	}
 
+	var bucketSlot BucketSlot
+	var err error
+	// TODO: Remove hack for policy.json & notification.xml
+	if strings.HasSuffix(object, "policy.json") || strings.HasSuffix(object, "notification.xml") {
+		bucketSlot = xl.bucketSlots[0]
+	} else {
+		bucketSlot, err = xl.getReadableSlot(bucket, object)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Read metadata associated with the object from all disks.
 	metaArr, errs := readAllXLMetadata(bucketSlot.storageDisks, bucket, object)
 	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, bucketSlot.readQuorum); reducedErr != nil {
@@ -458,7 +470,7 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 	// Check if an object is present as one of the parent dir.
 	// -- FIXME. (needs a new kind of lock).
 	// -- FIXME (this also causes performance issue when disks are down).
-	if xl.parentDirIsObject(bucket, path.Dir(object)) {
+	if false && xl.parentDirIsObject(bucket, path.Dir(object)) {
 		return ObjectInfo{}, toObjectErr(traceError(errFileAccessDenied), bucket, object)
 	}
 

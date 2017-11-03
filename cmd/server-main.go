@@ -173,6 +173,7 @@ func serverMain(ctx *cli.Context) {
 
 	// Set nodes for dsync for distributed setup.
 	if globalIsDistXL {
+		// TODO: filter out end points to use for dsync
 		dsyncEndpoints := EndpointList{}
 		for i, ep := range globalEndpoints {
 			if i % getBucketSlots([]StorageAPI{}) == 0 {

@@ -39,20 +39,24 @@ const (
 	minRAMSize = 24 * humanize.GiByte
 
 	// Maximum erasure blocks.
-	maxErasureBlocks = 16
+	// HACK: Expand to 32 for bucket scaling testing
+	maxErasureBlocks = 32
 
 	// Minimum erasure blocks.
 	minErasureBlocks = 4
 )
 
+// listState - Keep track of state for List operations
+type listState struct {
+	indices    *[]int
+	mapLOI     *map[int]ListObjectsInfo
+	endTimerCh chan<- struct{} // To signal when timer go-routine should end.
+}
+
 // xlObjects - Implements XL object layer.
 type xlObjects struct {
-	mutex        *sync.Mutex
-	storageDisks []StorageAPI // Collection of initialized backend disks.
-	dataBlocks   int          // dataBlocks count caculated for erasure.
-	parityBlocks int          // parityBlocks count calculated for erasure.
-	readQuorum   int          // readQuorum minimum required disks to read data.
-	writeQuorum  int          // writeQuorum minimum required disks to write data.
+	mutex       *sync.Mutex
+	bucketSlots []BucketSlot // Collection of slots into which buckets can be created.
 
 	// ListObjects pool management.
 	listPool *treeWalkPool
@@ -62,6 +66,9 @@ type xlObjects struct {
 
 	// Object cache enabled.
 	objCacheEnabled bool
+
+	// ListState pool management
+	listStatePool *listStatePool
 }
 
 // list of all errors that can be ignored in tree walk operation in XL
@@ -91,32 +98,71 @@ func newXLObjects(storageDisks []StorageAPI) (ObjectLayer, error) {
 		return nil, errInvalidArgument
 	}
 
-	readQuorum := len(storageDisks) / 2
-	writeQuorum := len(storageDisks)/2 + 1
-
-	// Load saved XL format.json and validate.
-	newStorageDisks, err := loadFormatXL(storageDisks, readQuorum)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to recognize backend format, %s", err)
-	}
-
-	// Calculate data and parity blocks.
-	dataBlocks, parityBlocks := len(newStorageDisks)/2, len(newStorageDisks)/2
-
 	// Initialize list pool.
 	listPool := newTreeWalkPool(globalLookupTimeout)
 
 	// Initialize xl objects.
 	xl := &xlObjects{
-		mutex:        &sync.Mutex{},
-		storageDisks: newStorageDisks,
-		dataBlocks:   dataBlocks,
-		parityBlocks: parityBlocks,
-		listPool:     listPool,
+		mutex:         &sync.Mutex{},
+		listPool:      listPool,
+		listStatePool: newListStatePool(globalLookupTimeout),
+	}
+
+	var firstHealError error
+	for slot := 0; slot < getBucketSlots([]StorageAPI{}); slot++ {
+
+		bucketSlotDisks := getDisksForBucketSlot(storageDisks, slot)
+		readQuorum := len(bucketSlotDisks) / 2
+		writeQuorum := len(bucketSlotDisks)/2 + 1
+
+		// Load saved XL format.json and validate.
+		newStorageDisks, err := loadFormatXL(bucketSlotDisks, readQuorum)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to recognize backend format, %s", err)
+		}
+
+
+		// Calculate data and parity blocks.
+		dataBlocks, parityBlocks := len(newStorageDisks)/2, len(newStorageDisks)/2
+
+		// Initialize meta volume, if volume already exists ignores it.
+		// TODO: Check if not initializating more than once (.minio.sys)
+		if err = initMetaVolume( /*xl.storageDisks*/ newStorageDisks); err != nil {
+			return nil, fmt.Errorf("Unable to initialize '.minio.sys' meta volume, %s", err)
+		}
+
+		// Figure out read and write quorum based on number of storage disks.
+		// READ and WRITE quorum is always set to (N/2) number of disks.
+
+		xl.bucketSlots = append(xl.bucketSlots, BucketSlot{
+			dataBlocks:   dataBlocks,
+			parityBlocks: parityBlocks,
+			readQuorum:   readQuorum,
+			writeQuorum:  writeQuorum,
+			storageDisks: newStorageDisks,
+		})
+
+		// If the number of offline servers is equal to the readQuorum
+		// (i.e. the number of online servers also equals the
+		// readQuorum), we cannot perform quick-heal (no
+		// write-quorum). However reads may still be possible, so we
+		// skip quick-heal in this case, and continue.
+		offlineCount := len(newStorageDisks) - diskCount(newStorageDisks)
+		if offlineCount == readQuorum {
+			return xl, nil
+		}
+
+		// Do a quick heal on the buckets themselves for any discrepancies.
+		// TODO: Check if we are not healing more than once
+		e := quickHeal( /*xl.storageDisks*/ newStorageDisks, writeQuorum, readQuorum)
+		if e != nil && firstHealError == nil {
+			firstHealError = e
+		}
 	}
 
 	// Get cache size if _MINIO_CACHE environment variable is set.
 	var maxCacheSize uint64
+	var err error
 	if !globalXLObjCacheDisabled {
 		maxCacheSize, err = GetMaxCacheSize()
 		errorIf(err, "Unable to get maximum cache size")
@@ -138,40 +184,21 @@ func newXLObjects(storageDisks []StorageAPI) (ObjectLayer, error) {
 		xl.objCache = objCache
 	}
 
-	// Initialize meta volume, if volume already exists ignores it.
-	if err = initMetaVolume(xl.storageDisks); err != nil {
-		return nil, fmt.Errorf("Unable to initialize '.minio.sys' meta volume, %s", err)
-	}
-
-	// Figure out read and write quorum based on number of storage disks.
-	// READ and WRITE quorum is always set to (N/2) number of disks.
-	xl.readQuorum = readQuorum
-	xl.writeQuorum = writeQuorum
-
-	// If the number of offline servers is equal to the readQuorum
-	// (i.e. the number of online servers also equals the
-	// readQuorum), we cannot perform quick-heal (no
-	// write-quorum). However reads may still be possible, so we
-	// skip quick-heal in this case, and continue.
-	offlineCount := len(newStorageDisks) - diskCount(newStorageDisks)
-	if offlineCount == readQuorum {
-		return xl, nil
-	}
-
-	// Do a quick heal on the buckets themselves for any discrepancies.
-	return xl, quickHeal(xl.storageDisks, xl.writeQuorum, xl.readQuorum)
+	return xl, firstHealError
 }
 
 // Shutdown function for object storage interface.
 func (xl xlObjects) Shutdown() error {
 	// Add any object layer shutdown activities here.
-	for _, disk := range xl.storageDisks {
-		// This closes storage rpc client connections if any.
-		// Otherwise this is a no-op.
-		if disk == nil {
-			continue
+	for _, bucketSlot := range xl.bucketSlots {
+		for _, disk := range bucketSlot.storageDisks {
+			// This closes storage rpc client connections if any.
+			// Otherwise this is a no-op.
+			if disk == nil {
+				continue
+			}
+			disk.Close()
 		}
-		disk.Close()
 	}
 	return nil
 }
@@ -255,8 +282,23 @@ func getStorageInfo(disks []StorageAPI) StorageInfo {
 
 // StorageInfo - returns underlying storage statistics.
 func (xl xlObjects) StorageInfo() StorageInfo {
-	storageInfo := getStorageInfo(xl.storageDisks)
-	storageInfo.Backend.ReadQuorum = xl.readQuorum
-	storageInfo.Backend.WriteQuorum = xl.writeQuorum
-	return storageInfo
+	var storageInfo *StorageInfo
+	for _, bucketSlot := range xl.bucketSlots {
+		si := getStorageInfo(bucketSlot.storageDisks)
+		if storageInfo == nil {
+			storageInfo = &si
+			storageInfo.Backend.ReadQuorum = bucketSlot.readQuorum
+			storageInfo.Backend.WriteQuorum = bucketSlot.writeQuorum
+		} else {
+			storageInfo.Total += si.Total
+			storageInfo.Free += si.Free
+
+			// TODO: How to communicate status to user:
+			// 32 Online, 0 Offline. We can withstand [4] more drive failure(s).
+			storageInfo.Backend.OnlineDisks += si.Backend.OnlineDisks
+			storageInfo.Backend.OfflineDisks += si.Backend.OfflineDisks
+			// TODO: Need to update Backend.ReadQuorum / Backend.WriteQuorum ??
+		}
+	}
+	return *storageInfo
 }
