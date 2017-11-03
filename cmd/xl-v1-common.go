@@ -114,6 +114,8 @@ func (xl *xlObjects) getWritableSlot(bucket, object string) (BucketSlot, error) 
 		return bucketSlot, nil
 	}
 
+	// TODO: Do simple hash-based placement, with reads trying this slot first, followed by search in other slots if not found
+
 	// For now randomly pick the slot in which to put the new object
 	slot := rand.Intn(len(bucketSlots))
 	return bucketSlots[slot], nil
