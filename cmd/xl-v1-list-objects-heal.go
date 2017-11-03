@@ -76,12 +76,14 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 		recursive = false
 	}
 
+	// HACK: Iterate over all bucketSlots
+	bucketSlot := xl.bucketSlots[0]
 
 	walkResultCh, endWalkCh := xl.listPool.Release(listParams{bucket: bucket, recursive: recursive, marker: marker, prefix: prefix, heal: true})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		isLeaf := xl.isObject
-		listDir := listDirHealFactory(isLeaf, xl.storageDisks...)
+		listDir := listDirHealFactory(isLeaf, bucketSlot.storageDisks...)
 		walkResultCh = startTreeWalk(bucket, prefix, marker, recursive, listDir, nil, endWalkCh)
 	}
 
@@ -142,8 +144,8 @@ func (xl xlObjects) listObjectsHeal(bucket, prefix, marker, delimiter string, ma
 		// Check if the current object needs healing
 		objectLock := globalNSMutex.NewNSLock(bucket, objInfo.Name)
 		objectLock.RLock()
-		partsMetadata, errs := readAllXLMetadata(xl.storageDisks, bucket, objInfo.Name)
-		if xlShouldHeal(xl.storageDisks, partsMetadata, errs, bucket, objInfo.Name) {
+		partsMetadata, errs := readAllXLMetadata(bucketSlot.storageDisks, bucket, objInfo.Name)
+		if xlShouldHeal(bucketSlot.storageDisks, partsMetadata, errs, bucket, objInfo.Name) {
 			healStat := xlHealStat(xl, partsMetadata, errs)
 			result.Objects = append(result.Objects, ObjectInfo{
 				Name:           objInfo.Name,
@@ -254,15 +256,19 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 		Delimiter:   delimiter,
 	}
 
+	bucketSlot, err := xl.getReadableSlot(bucket, prefix)
+	if err != nil {
+		return ListMultipartsInfo{}, err
+	}
+
 	recursive := delimiter != slashSeparator
 
 	var uploads []uploadMetadata
-	var err error
 	// List all upload ids for the given keyMarker, starting from
 	// uploadIDMarker.
 	if uploadIDMarker != "" {
 		uploads, _, err = fetchMultipartUploadIDs(bucket, keyMarker,
-			uploadIDMarker, maxUploads, xl.getLoadBalancedDisks())
+			uploadIDMarker, maxUploads, bucketSlot.getLoadBalancedDisks())
 		if err != nil {
 			return lmi, err
 		}
@@ -306,7 +312,7 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 			walkerDoneCh = make(chan struct{})
 			isLeaf := xl.isMultipartUpload
 			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs,
-				xl.getLoadBalancedDisks()...)
+				bucketSlot.getLoadBalancedDisks()...)
 			walkerCh = startTreeWalk(minioMetaMultipartBucket,
 				multipartPrefixPath, multipartMarkerPath,
 				recursive, listDir, isLeaf, walkerDoneCh)
@@ -343,7 +349,7 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 			var end bool
 			uploadIDMarker = ""
 			newUploads, end, err = fetchMultipartUploadIDs(bucket, entry, uploadIDMarker,
-				uploadsLeft, xl.getLoadBalancedDisks())
+				uploadsLeft, bucketSlot.getLoadBalancedDisks())
 			if err != nil {
 				return lmi, err
 			}
@@ -374,9 +380,9 @@ func (xl xlObjects) listMultipartUploadsHeal(bucket, prefix, keyMarker,
 		} else {
 			// Check if upload needs healing.
 			uploadIDPath := filepath.Join(bucket, upload.Object, upload.UploadID)
-			partsMetadata, errs := readAllXLMetadata(xl.storageDisks,
+			partsMetadata, errs := readAllXLMetadata(bucketSlot.storageDisks,
 				minioMetaMultipartBucket, uploadIDPath)
-			if xlShouldHeal(xl.storageDisks, partsMetadata, errs,
+			if xlShouldHeal(bucketSlot.storageDisks, partsMetadata, errs,
 				minioMetaMultipartBucket, uploadIDPath) {
 
 				healUploadInfo := xlHealStat(xl, partsMetadata, errs)

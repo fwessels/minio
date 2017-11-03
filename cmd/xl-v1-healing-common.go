@@ -194,8 +194,10 @@ func xlShouldHeal(disks []StorageAPI, partsMetadata []xlMetaV1, errs []error, bu
 func xlHealStat(xl xlObjects, partsMetadata []xlMetaV1, errs []error) HealObjectInfo {
 	// Less than quorum erasure coded blocks of the object have the same create time.
 	// This object can't be healed with the information we have.
+	// HACK: find proper slot
+	bucketSlot := xl.bucketSlots[0]
 	modTime, count := commonTime(listObjectModtimes(partsMetadata, errs))
-	if count < xl.readQuorum {
+	if count < bucketSlot.readQuorum {
 		return HealObjectInfo{
 			Status:             quorumUnavailable,
 			MissingDataCount:   0,
@@ -228,7 +230,7 @@ func xlHealStat(xl xlObjects, partsMetadata []xlMetaV1, errs []error) HealObject
 			disksMissing = true
 			fallthrough
 		case errFileNotFound:
-			if xlMeta.Erasure.Distribution[i]-1 < xl.dataBlocks {
+			if xlMeta.Erasure.Distribution[i]-1 < bucketSlot.dataBlocks {
 				missingDataCount++
 			} else {
 				missingParityCount++

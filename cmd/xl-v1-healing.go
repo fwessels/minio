@@ -79,13 +79,15 @@ func (xl xlObjects) HealBucket(bucket string) error {
 		return err
 	}
 
+	// HACK: Iterate over all bucketSlots
+	bucketSlot := xl.bucketSlots[0]
 	// Heal bucket.
-	if err := healBucket(xl.storageDisks, bucket, xl.writeQuorum); err != nil {
+	if err := healBucket(bucketSlot.storageDisks, bucket, bucketSlot.writeQuorum); err != nil {
 		return err
 	}
 
 	// Proceed to heal bucket metadata.
-	return healBucketMetadata(xl.storageDisks, bucket, xl.readQuorum)
+	return healBucketMetadata(bucketSlot.storageDisks, bucket, bucketSlot.readQuorum)
 }
 
 // Heal bucket - create buckets on disks where it does not exist.
@@ -263,8 +265,10 @@ func (xl xlObjects) bucketHealStatus(bucketName string) (healStatus, error) {
 // ListBucketsHeal - Find all buckets that need to be healed
 func (xl xlObjects) ListBucketsHeal() ([]BucketInfo, error) {
 	listBuckets := []BucketInfo{}
+	// HACK: Iterate over all bucketSlots
+	bucketSlot := xl.bucketSlots[0]
 	// List all buckets that can be found in all disks
-	buckets, occ, err := listAllBuckets(xl.storageDisks)
+	buckets, occ, err := listAllBuckets(bucketSlot.storageDisks)
 	if err != nil {
 		return listBuckets, err
 	}
@@ -277,7 +281,7 @@ func (xl xlObjects) ListBucketsHeal() ([]BucketInfo, error) {
 			return []BucketInfo{}, err
 		}
 		// If all metadata are sane, check if the bucket directory is present in all disks
-		if bucketHealStatus == healthy && occ[currBucket.Name] != len(xl.storageDisks) {
+		if bucketHealStatus == healthy && occ[currBucket.Name] != len(bucketSlot.storageDisks) {
 			// Current bucket is missing in some of the storage disks
 			bucketHealStatus = canHeal
 		}
@@ -523,6 +527,8 @@ func (xl xlObjects) HealObject(bucket, object string) (int, int, error) {
 	objectLock.RLock()
 	defer objectLock.RUnlock()
 
+	// HACK: Find proper slot for object
+	bucketSlot := xl.bucketSlots[0]
 	// Heal the object.
-	return healObject(xl.storageDisks, bucket, object, xl.readQuorum)
+	return healObject(bucketSlot.storageDisks, bucket, object, bucketSlot.readQuorum)
 }
