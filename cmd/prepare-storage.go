@@ -375,6 +375,8 @@ func waitForFormatXLDisks(firstDisk bool, endpoints EndpointList, storageDisks [
 	// Wait for all make volumes to finish.
 	wg.Wait()
 
+	// TODO: Properly handle dErrs
+
 	// Initialize the disk into a formatted disks wrapper.
 	formattedDisks = make([]StorageAPI, len(storageDisks))
 	for i, storage := range storageDisks {
