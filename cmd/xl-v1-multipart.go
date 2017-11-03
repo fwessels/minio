@@ -163,19 +163,27 @@ func (xl xlObjects) removeUploadID(bucketSlot *BucketSlot, bucket, object string
 
 // Returns if the prefix is a multipart upload.
 func (xl xlObjects) isMultipartUpload(bucket, prefix string) bool {
-	for _, disk := range xl.getLoadBalancedDisks() {
-		if disk == nil {
-			continue
+	// TODO: Called from listMultipartUploads -- should pass in bucketSlot
+
+	bucketSlots, err := xl.getSlotsForBucket(bucket)
+	if err != nil {
+		return false
+	}
+	for _, bucketSlot := range bucketSlots {
+		for _, disk := range bucketSlot.getLoadBalancedDisks() {
+			if disk == nil {
+				continue
+			}
+			_, err := disk.StatFile(bucket, pathJoin(prefix, uploadsJSONFile))
+			if err == nil {
+				return true
+			}
+			// For any reason disk was deleted or goes offline, continue
+			if isErrIgnored(err, objMetadataOpIgnoredErrs...) {
+				continue
+			}
+			break
 		}
-		_, err := disk.StatFile(bucket, pathJoin(prefix, uploadsJSONFile))
-		if err == nil {
-			return true
-		}
-		// For any reason disk was deleted or goes offline, continue
-		if isErrIgnored(err, objMetadataOpIgnoredErrs...) {
-			continue
-		}
-		break
 	}
 	return false
 }
@@ -284,9 +292,19 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		Delimiter:   delimiter,
 	}
 
+	// HACK: Early abort for now
+	result.IsTruncated = false
+	return result, nil
+
 	recursive := true
 	if delimiter == slashSeparator {
 		recursive = false
+	}
+
+	// TODO: Iterate over all slots
+	bucketSlot, err := xl.getReadableSlot(bucket, prefix)
+	if err != nil {
+		return ListMultipartsInfo{}, err
 	}
 
 	// Not using path.Join() as it strips off the trailing '/'.
@@ -301,7 +319,6 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		multipartMarkerPath = pathJoin(bucket, keyMarker)
 	}
 	var uploads []uploadMetadata
-	var err error
 	var eof bool
 	// List all upload ids for the keyMarker starting from
 	// uploadIDMarker first.
@@ -310,7 +327,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 		keyMarkerLock := globalNSMutex.NewNSLock(minioMetaMultipartBucket,
 			pathJoin(bucket, keyMarker))
 		keyMarkerLock.RLock()
-		for _, disk := range xl.getLoadBalancedDisks() {
+		for _, disk := range bucketSlot.getLoadBalancedDisks() {
 			if disk == nil {
 				continue
 			}
@@ -331,14 +348,13 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 	}
 	var walkerCh chan treeWalkResult
 	var walkerDoneCh chan struct{}
-	heal := false // true only for xl.ListObjectsHeal
 	// Validate if we need to list further depending on maxUploads.
 	if maxUploads > 0 {
-		walkerCh, walkerDoneCh = xl.listPool.Release(listParams{minioMetaMultipartBucket, recursive, multipartMarkerPath, multipartPrefixPath, heal})
+		walkerCh, walkerDoneCh = xl.listPool.Release(listParams{bucket: minioMetaMultipartBucket, recursive: recursive, marker: multipartMarkerPath, prefix: multipartPrefixPath})
 		if walkerCh == nil {
 			walkerDoneCh = make(chan struct{})
 			isLeaf := xl.isMultipartUpload
-			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, xl.getLoadBalancedDisks()...)
+			listDir := listDirFactory(isLeaf, xlTreeWalkIgnoredErrs, bucketSlot.getLoadBalancedDisks()...)
 			walkerCh = startTreeWalk(minioMetaMultipartBucket, multipartPrefixPath, multipartMarkerPath, recursive, listDir, isLeaf, walkerDoneCh)
 		}
 		// Collect uploads until we have reached maxUploads count to 0.
@@ -377,7 +393,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 				pathJoin(bucket, entry))
 			entryLock.RLock()
 			var disk StorageAPI
-			for _, disk = range xl.getLoadBalancedDisks() {
+			for _, disk = range bucketSlot.getLoadBalancedDisks() {
 				if disk == nil {
 					continue
 				}
@@ -426,7 +442,7 @@ func (xl xlObjects) listMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 	if !eof {
 		// Save the go-routine state in the pool so that it can continue from where it left off on
 		// the next request.
-		xl.listPool.Set(listParams{bucket, recursive, result.NextKeyMarker, prefix, heal}, walkerCh, walkerDoneCh)
+		xl.listPool.Set(listParams{bucket: bucket, recursive: recursive, marker: result.NextKeyMarker, prefix: prefix}, walkerCh, walkerDoneCh)
 	}
 
 	result.IsTruncated = !eof
@@ -451,6 +467,8 @@ func (xl xlObjects) ListMultipartUploads(bucket, prefix, keyMarker, uploadIDMark
 	if err := checkListMultipartArgs(bucket, prefix, keyMarker, uploadIDMarker, delimiter, xl); err != nil {
 		return lmi, err
 	}
+
+	// TODO: Merge the list over all slots of this bucket
 
 	return xl.listMultipartUploads(bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
 }
