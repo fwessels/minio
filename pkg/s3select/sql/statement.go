@@ -34,7 +34,7 @@ const (
 
 // SelectStatement is the top level parsed and analyzed structure
 type SelectStatement struct {
-	selectAST *Select
+	SelectAST *Select
 
 	// Analysis result of the statement
 	selectQProp qProp
@@ -56,7 +56,7 @@ func ParseSelectStatement(s string) (stmt SelectStatement, err error) {
 		err = errQueryParseFailure(err)
 		return
 	}
-	stmt.selectAST = &selectAST
+	stmt.SelectAST = &selectAST
 
 	// Check the parsed limit value
 	stmt.limitValue, err = parseLimit(selectAST.Limit)
@@ -125,7 +125,7 @@ func parseLimit(v *LitValue) (int64, error) {
 // EvalFrom evaluates the From clause on the input record. It only
 // applies to JSON input data format (currently).
 func (e *SelectStatement) EvalFrom(format string, input Record) (Record, error) {
-	if e.selectAST.From.HasKeypath() {
+	if e.SelectAST.From.HasKeypath() {
 		if format == "json" {
 			objFmt, rawVal := input.Raw()
 			if objFmt != SelectFmtJSON {
@@ -133,7 +133,7 @@ func (e *SelectStatement) EvalFrom(format string, input Record) (Record, error) 
 			}
 
 			jsonRec := rawVal.(jstream.KVS)
-			txedRec, err := jsonpathEval(e.selectAST.From.Table.PathExpr[1:], jsonRec)
+			txedRec, err := jsonpathEval(e.SelectAST.From.Table.PathExpr[1:], jsonRec)
 			if err != nil {
 				return nil, err
 			}
@@ -165,7 +165,7 @@ func (e *SelectStatement) IsAggregated() bool {
 // AggregateResult - returns the aggregated result after all input
 // records have been processed. Applies only to aggregation queries.
 func (e *SelectStatement) AggregateResult(output Record) error {
-	for i, expr := range e.selectAST.Expression.Expressions {
+	for i, expr := range e.SelectAST.Expression.Expressions {
 		v, err := expr.evalNode(nil)
 		if err != nil {
 			return err
@@ -176,10 +176,10 @@ func (e *SelectStatement) AggregateResult(output Record) error {
 }
 
 func (e *SelectStatement) isPassingWhereClause(input Record) (bool, error) {
-	if e.selectAST.Where == nil {
+	if e.SelectAST.Where == nil {
 		return true, nil
 	}
-	value, err := e.selectAST.Where.evalNode(input)
+	value, err := e.SelectAST.Where.evalNode(input)
 	if err != nil {
 		return false, err
 	}
@@ -204,7 +204,7 @@ func (e *SelectStatement) AggregateRow(input Record) error {
 		return nil
 	}
 
-	for _, expr := range e.selectAST.Expression.Expressions {
+	for _, expr := range e.SelectAST.Expression.Expressions {
 		err := expr.aggregateRow(input)
 		if err != nil {
 			return err
@@ -222,7 +222,7 @@ func (e *SelectStatement) Eval(input, output Record) (Record, error) {
 		return nil, err
 	}
 
-	if e.selectAST.Expression.All {
+	if e.SelectAST.Expression.All {
 		// Return the input record for `SELECT * FROM
 		// .. WHERE ..`
 
@@ -234,7 +234,7 @@ func (e *SelectStatement) Eval(input, output Record) (Record, error) {
 		return input, nil
 	}
 
-	for i, expr := range e.selectAST.Expression.Expressions {
+	for i, expr := range e.SelectAST.Expression.Expressions {
 		v, err := expr.evalNode(input)
 		if err != nil {
 			return nil, err
@@ -266,3 +266,39 @@ func (e *SelectStatement) LimitReached() bool {
 	}
 	return e.outputCount >= e.limitValue
 }
+
+func (s *Select) SimdValidateCount() (simd, countStar bool, compareLHS string, compareRHS string) {
+
+	if s.Expression.All {	// select *
+		simd = true
+	} else if len(s.Expression.Expressions) > 0 && // select count(*)
+		len(s.Expression.Expressions[0].Expression.And) > 0 &&
+		len(s.Expression.Expressions[0].Expression.And[0].Condition) > 0 &&
+		s.Expression.Expressions[0].Expression.And[0].Condition[0].Operand != nil {
+		operand := s.Expression.Expressions[0].Expression.And[0].Condition[0].Operand
+		countStar = operand.Operand != nil &&
+			operand.Operand.Left != nil &&
+			operand.Operand.Left.Left != nil &&
+			operand.Operand.Left.Left.Primary != nil &&
+			operand.Operand.Left.Left.Primary.FuncCall != nil &&
+			operand.Operand.Left.Left.Primary.FuncCall.Count != nil &&
+			operand.Operand.Left.Left.Primary.FuncCall.Count.StarArg
+		simd = countStar
+	}
+
+	if simd {
+		if len(s.Where.And) > 0 &&
+			len(s.Where.And[0].Condition) > 0 &&
+			s.Where.And[0].Condition[0].Operand != nil {
+			operand := s.Where.And[0].Condition[0].Operand
+			if operand.Operand.Left.Left.Primary.Value != nil {
+				compareLHS = string(*(operand.Operand.Left.Left.Primary.Value.String))
+			} else if operand.Operand.Left.Left.Primary.JPathExpr != nil {
+				compareLHS = *(operand.Operand.Left.Left.Primary.JPathExpr.BaseKey.Unquoted)
+			}
+			compareRHS = string(*(operand.ConditionRHS.Compare.Operand.Left.Left.Primary.Value.String))
+		}
+	}
+	return
+}
+

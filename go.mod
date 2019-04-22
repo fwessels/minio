@@ -59,6 +59,7 @@ require (
 	github.com/minio/mc v0.0.0-20190401030144-a1355e50e2e8
 	github.com/minio/minio-go v0.0.0-20190327203652-5325257a208f
 	github.com/minio/parquet-go v0.0.0-20190318185229-9d767baf1679
+	github.com/minio/select-simd v0.0.0-20190422201141-507d80553531
 	github.com/minio/sha256-simd v0.0.0-20190328051042-05b4dd3047e5
 	github.com/minio/sio v0.0.0-20190118043801-035b4ef8c449
 	github.com/mitchellh/go-homedir v1.1.0

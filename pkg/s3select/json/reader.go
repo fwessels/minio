@@ -18,6 +18,7 @@ package json
 
 import (
 	"io"
+	"bytes"
 
 	"github.com/minio/minio/pkg/s3select/sql"
 
@@ -65,6 +66,9 @@ func (r *Reader) Read() (sql.Record, error) {
 func (r *Reader) Close() error {
 	return r.readCloser.Close()
 }
+
+func (r *Reader) GetChunks() (result []*bytes.Buffer) { return }
+func (r *Reader) GetColumnNames() []string { return []string{} }
 
 // NewReader - creates new JSON reader using readCloser.
 func NewReader(readCloser io.ReadCloser, args *ReaderArgs) *Reader {

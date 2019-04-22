@@ -18,6 +18,7 @@ package parquet
 
 import (
 	"io"
+	"bytes"
 
 	"github.com/bcicen/jstream"
 	jsonfmt "github.com/minio/minio/pkg/s3select/json"
@@ -81,6 +82,9 @@ func (r *Reader) Read() (rec sql.Record, rerr error) {
 func (r *Reader) Close() error {
 	return r.reader.Close()
 }
+
+func (r *Reader) GetChunks() (result []*bytes.Buffer) { return }
+func (r *Reader) GetColumnNames() []string { return []string{} }
 
 // NewReader - creates new Parquet reader using readerFunc callback.
 func NewReader(getReaderFunc func(offset, length int64) (io.ReadCloser, error), args *ReaderArgs) (*Reader, error) {

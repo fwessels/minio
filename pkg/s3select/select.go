@@ -17,8 +17,10 @@
 package s3select
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
+	"github.com/minio/select-simd"
 	"io"
 	"net/http"
 	"strings"
@@ -32,6 +34,8 @@ import (
 type recordReader interface {
 	Read() (sql.Record, error)
 	Close() error
+	GetChunks() []*bytes.Buffer
+	GetColumnNames() []string
 }
 
 const (
@@ -190,6 +194,10 @@ type S3Select struct {
 	statement      *sql.SelectStatement
 	progressReader *progressReader
 	recordReader   recordReader
+	simd           bool
+	countStar      bool
+	compareLHS     string
+	compareRHS     string
 }
 
 var (
@@ -262,7 +270,7 @@ func (s3Select *S3Select) getProgress() (bytesScanned, bytesProcessed int64) {
 
 // Open - opens S3 object by using callback for SQL selection query.
 // Currently CSV, JSON and Apache Parquet formats are supported.
-func (s3Select *S3Select) Open(getReader func(offset, length int64) (io.ReadCloser, error)) error {
+func (s3Select *S3Select) Open(getReader func(offset, length int64) (io.ReadCloser, error), cachePath string) error {
 	switch s3Select.Input.format {
 	case csvFormat:
 		rc, err := getReader(0, -1)
@@ -275,7 +283,14 @@ func (s3Select *S3Select) Open(getReader func(offset, length int64) (io.ReadClos
 			return err
 		}
 
-		s3Select.recordReader, err = csv.NewReader(s3Select.progressReader, &s3Select.Input.CSVArgs)
+		s3Select.simd, s3Select.countStar, s3Select.compareLHS, s3Select.compareRHS = s3Select.statement.SelectAST.SimdValidateCount()
+
+		if s3Select.simd {
+			s3Select.recordReader, err = csv.NewReaderSimd(s3Select.progressReader, &s3Select.Input.CSVArgs, cachePath)
+		} else {
+			s3Select.recordReader, err = csv.NewReader(s3Select.progressReader, &s3Select.Input.CSVArgs)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -357,6 +372,59 @@ func (s3Select *S3Select) Evaluate(w http.ResponseWriter) {
 		}
 
 		return true
+	}
+	sendRecordRaw := func(data []byte) bool {
+		if len(data) > maxRecordSize {
+			writer.FinishWithError("OverMaxRecordSize", "The length of a record in the input or result is greater than maxCharsPerRecord of 1 MB.")
+			return false
+		}
+
+		if err = writer.SendRecord(data); err != nil {
+			// FIXME: log this error.
+			err = nil
+			return false
+		}
+
+		return true
+	}
+
+	if s3Select.simd {
+		headerIndex := -1
+		for i, s := range s3Select.recordReader.GetColumnNames() {
+			if s == s3Select.compareLHS {
+				headerIndex = i
+				break
+			}
+		}
+
+		if s3Select.countStar {
+			result := selectsimd.ProcessCountParallel(s3Select.recordReader.GetChunks(), uint64(headerIndex), string(s3Select.compareRHS))
+
+			outputRecord = s3Select.outputRecord()
+			/* s3Select.statement.AggregateResult(outputRecord) */
+			outputRecord.Set(fmt.Sprintf("_%d", 1), sql.FromInt(result))
+			if !sendRecord() {
+			}
+			writer.Finish(s3Select.getProgress())
+			return
+		} else {
+			results := selectsimd.ProcessSelectStar(s3Select.recordReader.GetChunks(), uint64(headerIndex), string(s3Select.compareRHS))
+
+			for _, r := range results {
+				if len(r) > 0 {
+					for _, s := range bytes.Split(r, []byte{0x0}) {
+						if len(s) > 0 {
+							if !sendRecordRaw(s) { // send payload
+							}
+							if !sendRecordRaw([]byte{0x0d, 0x0a}) { // send line break
+							}
+						}
+					}
+				}
+			}
+			writer.Finish(s3Select.getProgress())
+			return
+		}
 	}
 
 	for {
